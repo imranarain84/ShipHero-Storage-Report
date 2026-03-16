@@ -23,6 +23,10 @@ st.markdown("""
         border-radius: 10px;
         margin-bottom: 20px;
     }
+    /* Styling the sidebar table to be compact */
+    [data-testid="stSidebar"] .stTable {
+        font-size: 12px;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -151,7 +155,8 @@ if data_response and 'data' in data_response:
                 for loc_edge in loc_edges:
                     l_node = loc_edge.get('node', {})
                     l_name = l_node.get('location', {}).get('name', 'Unknown')
-                    l_qty = l_node.get('quantity', 0)
+                    # Inventory quantity (items inside)
+                    inv_qty = l_node.get('quantity', 0)
                     
                     l_type = location_map.get(l_name, "Unknown")
                     daily_fee = STORAGE_TYPES.get(l_type, 0.0)
@@ -160,7 +165,7 @@ if data_response and 'data' in data_response:
                         "SKU": node.get('sku'),
                         "Location": l_name,
                         "Storage Type": l_type,
-                        "Quantity": l_qty,
+                        "Inv Qty": inv_qty,
                         "Daily Rate": daily_fee,
                         "Monthly Est.": round(daily_fee * 30, 2)
                     })
@@ -169,24 +174,34 @@ if data_response and 'data' in data_response:
         df = pd.DataFrame(report_list)
         total_monthly = df["Monthly Est."].sum()
         
-        # --- Sidebar Occupancy Chart (Modified for Quantity) ---
+        # --- Sidebar Summary Table (Requested Change) ---
         st.sidebar.markdown("---")
-        st.sidebar.subheader("Storage Type Usage")
+        st.sidebar.subheader("Cost Breakdown")
         
-        # We count the number of locations for each storage type
-        # Using .size() gives us the count of storage units occupied
-        usage_counts = df.groupby("Storage Type").size().sort_values(ascending=False)
+        # Aggregate data for the summary table
+        summary_df = df.groupby("Storage Type").agg(
+            Quantity=('Location', 'count'),
+            Total_Cost=('Monthly Est.', 'sum')
+        ).reset_index()
         
-        # Update chart to show quantity
-        st.sidebar.bar_chart(usage_counts)
-        st.sidebar.info("Chart shows the total count of locations occupied per type.")
+        # Reorder columns: Quantity, Storage Type, Total Cost
+        summary_df = summary_df[['Quantity', 'Storage Type', 'Total_Cost']]
+        
+        # Format the Total Cost as currency for the table
+        summary_df['Total_Cost'] = summary_df['Total_Cost'].map('${:,.2f}'.format)
+        
+        st.sidebar.table(summary_df)
 
         # --- Main Dashboard ---
         col1, col2 = st.columns(2)
         col1.metric(f"Total Monthly Cost ({selected_tag})", f"${total_monthly:,.2f}")
         col2.metric("Target Metric", "$0.65/cuft Avg")
 
-        st.dataframe(df, use_container_width=True)
+        # Update main dataframe column names for clarity
+        main_display_df = df.copy()
+        main_display_df["Monthly Est."] = main_display_df["Monthly Est."].map('${:,.2f}'.format)
+        
+        st.dataframe(main_display_df, use_container_width=True)
         st.download_button("Download CSV Report", df.to_csv(index=False), "storage_report.csv", "text/csv")
     else:
         st.info(f"No active inventory for items tagged: {selected_tag}")
