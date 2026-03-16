@@ -2,44 +2,34 @@ import streamlit as st
 import pandas as pd
 import requests
 
-# 1. Access the API Key from Streamlit's Cloud Settings
-# You will set this up in the Streamlit Cloud dashboard in the next step
+# 1. Access the API Key from Streamlit Cloud Settings
 SHIPHERO_API_URL = "https://public-api.shiphero.com/graphql"
-token = st.secrets["SHIPHERO_TOKEN"]
-HEADERS = {"Authorization": f"Bearer {token}"}
 
-# 2. Daily Rate Card (Mapped from your PDF)
-# These rates aggregate to Ryan's $0.65/cuft target over 30 days
-STORAGE_RATES = {
-    "Standard Bin": 0.0442,
-    "Blue Bin Small": 0.0488,
-    "Blue Bin Medium": 0.1462,
-    "Blue Bin Large": 0.2925,
-    "Gray Bin Small": 0.1846,
-    "Gray Bin Medium": 0.2275,
-    "Gray Bin Large": 0.325,
-    "Pallet": 2.093,
-    "Pallet Large": 2.652,
-    "Pallet Small": 0.5902,
-    "Half Pallet": 1.0472,
-    "Tractor Trailer Load Floor": 52.00,
-    "Wall - Back": 12.116,
-    "Wall - Front": 4.4096
+if "SHIPHERO_TOKEN" not in st.secrets:
+    st.error("❌ 'SHIPHERO_TOKEN' not found in Streamlit Secrets. Please check your dashboard settings.")
+    st.stop()
+
+token = st.secrets["SHIPHERO_TOKEN"]
+HEADERS = {
+    "Authorization": f"Bearer {token}",
+    "Content-Type": "application/json"
 }
 
-st.title("📦 Backmarket Storage Report")
+st.title("🛠️ Debug Mode: ShipHero API")
 
-# 3. ShipHero API Call
-def fetch_data():
+# 2. ShipHero API Call with Debugging Enabled
+def fetch_debug_data():
+    # Simplest possible query to test connection
     query = """
     query {
       products(tags: ["backmarket"]) {
-        data(first: 100) {
+        data(first: 10) {
           edges {
             node {
               sku
+              tags
               warehouse_products {
-                locations(first: 50) {
+                locations(first: 5) {
                   edges {
                     node {
                       quantity
@@ -56,36 +46,28 @@ def fetch_data():
     """
     try:
         r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS)
-        return r.json()
+        
+        # DISPLAY RAW RESPONSE FOR DEBUGGING
+        st.subheader("Raw API Response")
+        if r.status_code != 200:
+            st.error(f"HTTP Error: {r.status_code}")
+            st.write(r.text)
+        else:
+            response_json = r.json()
+            st.json(response_json) # This shows you the actual JSON or the Error list
+            return response_json
+            
     except Exception as e:
-        st.error(f"Connection Error: {e}")
+        st.error(f"Python Exception: {e}")
         return None
 
-# 4. Processing & Display
-raw_data = fetch_data()
+# 3. Execution
+raw_data = fetch_debug_data()
 
 if raw_data and 'data' in raw_data:
-    rows = []
-    for edge in raw_data['data']['products']['data']['edges']:
-        node = edge['node']
-        for wh_prod in node['warehouse_products']:
-            for loc_edge in wh_prod['locations']['edges']:
-                loc_name = loc_edge['node']['location']['name']
-                qty = loc_edge['node']['quantity']
-                
-                # Match location to rate card [cite: 5, 10, 24, 64]
-                daily_rate = next((rate for key, rate in STORAGE_RATES.items() if key in loc_name), 0.0)
-                
-                rows.append({
-                    "SKU": node['sku'],
-                    "Location": loc_name,
-                    "Quantity": qty,
-                    "Daily Cost": f"${daily_rate:.4f}",
-                    "Est. Monthly": round(daily_rate * 30, 2)
-                })
-
-    df = pd.DataFrame(rows)
-    st.metric("Total Monthly Storage (Est.)", f"${df['Est. Monthly'].sum():,.2f}")
-    st.dataframe(df, use_container_width=True)
-else:
-    st.warning("No data found or API key is invalid.")
+    products = raw_data['data']['products']['data']['edges']
+    if not products:
+        st.warning("⚠️ Connection successful, but NO products were found with the tag 'backmarket'.")
+        st.info("Check if the tag is spelled exactly like that in ShipHero (it is case-sensitive).")
+    else:
+        st.success(f"✅ Success! Found {len(products)} products.")
