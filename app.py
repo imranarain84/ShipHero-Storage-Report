@@ -9,7 +9,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS for the dark header and centered white logo
+# Custom CSS for branding and layout
 st.markdown("""
     <style>
     [data-testid="stHeader"] {
@@ -23,10 +23,9 @@ st.markdown("""
         border-radius: 10px;
         margin-bottom: 20px;
     }
-    /* Hide the index column for tables in the sidebar */
-    [data-testid="stSidebar"] table thead tr th:first-child, 
-    [data-testid="stSidebar"] table tbody tr th:first-child {
-        display: none;
+    /* Style specifically for the sidebar dataframe to look clean */
+    [data-testid="stSidebar"] [data-testid="stDataFrame"] {
+        padding-top: 10px;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -141,9 +140,10 @@ if data_response and 'data' in data_response:
         st.warning("No products found in the account.")
         st.stop()
 
-    # Dropdown in Sidebar
+    # --- Sidebar Configuration ---
+    st.sidebar.header("Report Filters")
     available_tags = sorted(list({t for e in product_edges for t in e['node'].get('tags', []) if t}))
-    selected_tag = st.sidebar.selectbox("Filter by Product Tag", ["Show All"] + available_tags)
+    selected_tag = st.sidebar.selectbox("Select Product Tag", ["Show All"] + available_tags)
 
     report_list = []
     for edge in product_edges:
@@ -174,24 +174,33 @@ if data_response and 'data' in data_response:
         df = pd.DataFrame(report_list)
         total_monthly = df["Monthly Est."].sum()
         
-        # --- Sidebar Summary Table ---
+        # --- Sidebar Summary Table Logic ---
         st.sidebar.markdown("---")
         st.sidebar.subheader("Cost Breakdown")
         
-        # Aggregate data: Count unique locations and sum costs
+        # New Sorting Filters
+        sort_col = st.sidebar.selectbox("Sort By", ["Quantity", "Storage Type", "Total Cost"])
+        sort_order = st.sidebar.radio("Direction", ["Ascending / A-Z", "Descending / Z-A"])
+        ascending_bool = (sort_order == "Ascending / A-Z")
+
+        # Aggregate data
         summary_df = df.groupby("Storage Type").agg(
             Quantity=('Location', 'count'),
-            Total_Cost=('Monthly Est.', 'sum')
+            Total_Cost_Num=('Monthly Est.', 'sum')
         ).reset_index()
         
-        # Reorder columns: Quantity, Storage Type, Total Cost
-        summary_df = summary_df[['Quantity', 'Storage Type', 'Total_Cost']]
+        # Rename for clean sorting
+        summary_df = summary_df.rename(columns={'Total_Cost_Num': 'Total Cost'})
         
-        # Format for display
-        summary_df['Total_Cost'] = summary_df['Total_Cost'].map('${:,.2f}'.format)
+        # Apply Sorting before formatting currency
+        summary_df = summary_df.sort_values(by=sort_col, ascending=ascending_bool)
         
-        # We use st.write with CSS to hide the index, or st.table
-        st.sidebar.table(summary_df)
+        # Final formatting for display
+        display_summary = summary_df[['Quantity', 'Storage Type', 'Total Cost']].copy()
+        display_summary['Total Cost'] = display_summary['Total Cost'].map('${:,.2f}'.format)
+        
+        # Display sorted table in sidebar (hide_index=True removes the first column)
+        st.sidebar.dataframe(display_summary, use_container_width=True, hide_index=True)
 
         # --- Main Dashboard ---
         col1, col2 = st.columns(2)
@@ -199,7 +208,6 @@ if data_response and 'data' in data_response:
         col2.metric("Target Metric", "$0.65/cuft Avg")
 
         # Table Display (Main Area)
-        # To keep row numbers hidden in the main dataframe, we use st.dataframe(hide_index=True)
         main_display_df = df.copy()
         main_display_df["Monthly Est."] = main_display_df["Monthly Est."].map('${:,.2f}'.format)
         main_display_df["Daily Rate"] = main_display_df["Daily Rate"].map('${:,.4f}'.format)
