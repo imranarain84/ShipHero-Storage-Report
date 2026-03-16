@@ -23,10 +23,6 @@ st.markdown("""
         border-radius: 10px;
         margin-bottom: 20px;
     }
-    /* Style specifically for the sidebar dataframe to look clean */
-    [data-testid="stSidebar"] [data-testid="stDataFrame"] {
-        padding-top: 10px;
-    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -140,7 +136,7 @@ if data_response and 'data' in data_response:
         st.warning("No products found in the account.")
         st.stop()
 
-    # --- Sidebar Configuration ---
+    # --- Sidebar Filter ---
     st.sidebar.header("Report Filters")
     available_tags = sorted(list({t for e in product_edges for t in e['node'].get('tags', []) if t}))
     selected_tag = st.sidebar.selectbox("Select Product Tag", ["Show All"] + available_tags)
@@ -174,33 +170,29 @@ if data_response and 'data' in data_response:
         df = pd.DataFrame(report_list)
         total_monthly = df["Monthly Est."].sum()
         
-        # --- Sidebar Summary Table Logic ---
+        # --- Clean Sidebar Cost Breakdown ---
         st.sidebar.markdown("---")
         st.sidebar.subheader("Cost Breakdown")
         
-        # New Sorting Filters
-        sort_col = st.sidebar.selectbox("Sort By", ["Quantity", "Storage Type", "Total Cost"])
-        sort_order = st.sidebar.radio("Direction", ["Ascending / A-Z", "Descending / Z-A"])
-        ascending_bool = (sort_order == "Ascending / A-Z")
-
         # Aggregate data
         summary_df = df.groupby("Storage Type").agg(
             Quantity=('Location', 'count'),
-            Total_Cost_Num=('Monthly Est.', 'sum')
+            Total_Cost=('Monthly Est.', 'sum')
         ).reset_index()
         
-        # Rename for clean sorting
-        summary_df = summary_df.rename(columns={'Total_Cost_Num': 'Total Cost'})
+        # Reorder columns: Quantity first
+        summary_df = summary_df[['Quantity', 'Storage Type', 'Total_Cost']]
         
-        # Apply Sorting before formatting currency
-        summary_df = summary_df.sort_values(by=sort_col, ascending=ascending_bool)
-        
-        # Final formatting for display
-        display_summary = summary_df[['Quantity', 'Storage Type', 'Total Cost']].copy()
-        display_summary['Total Cost'] = display_summary['Total Cost'].map('${:,.2f}'.format)
-        
-        # Display sorted table in sidebar (hide_index=True removes the first column)
-        st.sidebar.dataframe(display_summary, use_container_width=True, hide_index=True)
+        # Create a display version with currency formatting
+        # Note: We keep the numbers raw in the st.dataframe so the built-in sorting works correctly
+        st.sidebar.dataframe(
+            summary_df, 
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "Total_Cost": st.column_config.NumberColumn("Total Cost", format="$%.2f")
+            }
+        )
 
         # --- Main Dashboard ---
         col1, col2 = st.columns(2)
@@ -208,11 +200,16 @@ if data_response and 'data' in data_response:
         col2.metric("Target Metric", "$0.65/cuft Avg")
 
         # Table Display (Main Area)
-        main_display_df = df.copy()
-        main_display_df["Monthly Est."] = main_display_df["Monthly Est."].map('${:,.2f}'.format)
-        main_display_df["Daily Rate"] = main_display_df["Daily Rate"].map('${:,.4f}'.format)
+        st.dataframe(
+            df, 
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "Daily Rate": st.column_config.NumberColumn("Daily Rate", format="$%.4f"),
+                "Monthly Est.": st.column_config.NumberColumn("Monthly Est.", format="$%.2f")
+            }
+        )
         
-        st.dataframe(main_display_df, use_container_width=True, hide_index=True)
         st.download_button("Download CSV Report", df.to_csv(index=False), "storage_report.csv", "text/csv")
     else:
         st.info(f"No active inventory for items tagged: {selected_tag}")
