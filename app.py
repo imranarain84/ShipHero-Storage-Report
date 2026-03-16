@@ -2,7 +2,34 @@ import streamlit as st
 import pandas as pd
 import requests
 
-# --- 1. CONFIGURATION & SECRETS ---
+# --- 1. CONFIGURATION, SECRETS & BRANDING ---
+st.set_page_config(
+    page_title="VP Storage Report", 
+    page_icon="VP Warehouse Icon TP.png", 
+    layout="wide"
+)
+
+# Custom CSS to handle the white logo on the header
+st.markdown("""
+    <style>
+    [data-testid="stHeader"] {
+        background-color: #0e1117;
+    }
+    .logo-container {
+        display: flex;
+        justify-content: center;
+        background-color: #0e1117;
+        padding: 20px;
+        border-radius: 10px;
+    }
+    </style>
+    """, unsafe_allow_index=True)
+
+# Centered Logo Display
+st.markdown('<div class="logo-container">', unsafe_allow_index=True)
+st.image("VP Logo Horizontal Transparent White Lettering.png", width=400)
+st.markdown('</div>', unsafe_allow_index=True)
+
 SHIPHERO_API_URL = "https://public-api.shiphero.com/graphql"
 
 if "SHIPHERO_TOKEN" not in st.secrets:
@@ -16,7 +43,7 @@ HEADERS = {
 }
 
 # --- 2. STORAGE RATE CARD ---
-# Data derived from provided Billing Profile documentation 
+# Data derived from your Billing Profile PDF [cite: 1, 2, 3, 4]
 STORAGE_TYPES = {
     "Standard Bin": 0.0442,
     "Bin": 0.0442,
@@ -47,18 +74,14 @@ STORAGE_TYPES = {
     "DT - Pallet": 2.2074
 }
 
-# --- 3. LOAD YOUR UPLOADED FILENAME ---
+# --- 3. LOAD LOCATION DATA ---
 @st.cache_data
 def get_location_lookup():
     try:
-        # Reference to the user-uploaded CSV file containing Location-to-Type mapping
+        # Loading your combined CSV [cite: 1, 2, 3, 4]
         df = pd.read_csv("ShipHero - Location Names and Info.csv")
         return dict(zip(df['Location'], df['Type']))
-    except FileNotFoundError:
-        st.error("❌ The file 'ShipHero - Location Names and Info.csv' was not found on GitHub.")
-        return {}
-    except Exception as e:
-        st.error(f"Error loading CSV: {e}")
+    except:
         return {}
 
 location_map = get_location_lookup()
@@ -66,7 +89,6 @@ location_map = get_location_lookup()
 # --- 4. API DATA FETCHING ---
 @st.cache_data(ttl=300)
 def fetch_shiphero_data():
-    # Query structure follows ShipHero GraphQL standards for product and location connections [cite: 1]
     query = """
     query {
       products {
@@ -94,18 +116,12 @@ def fetch_shiphero_data():
     """
     try:
         r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS)
-        if r.status_code == 200:
-            return r.json()
-        else:
-            st.error(f"API Error: {r.status_code}")
-            return None
-    except Exception as e:
-        st.error(f"Connection failed: {e}")
+        return r.json() if r.status_code == 200 else None
+    except:
         return None
 
-# --- 5. APP INTERFACE ---
-st.set_page_config(page_title="Storage Cost Report", layout="wide")
-st.title("📦 Storage Cost Report")
+# --- 5. PROCESSING & UI ---
+st.title("📦 Warehouse Storage Report")
 
 data_response = fetch_shiphero_data()
 
@@ -117,11 +133,9 @@ if data_response and 'data' in data_response:
         st.warning("No products found in the account.")
         st.stop()
 
-    # Gather Tags for the Dropdown
     available_tags = sorted(list({t for e in product_edges for t in e['node'].get('tags', []) if t}))
     selected_tag = st.sidebar.selectbox("Filter by Product Tag", ["Show All"] + available_tags)
 
-    # Process and Filter Data
     report_list = []
     for edge in product_edges:
         node = edge.get('node', {})
@@ -135,33 +149,28 @@ if data_response and 'data' in data_response:
                     l_name = l_node.get('location', {}).get('name', 'Unknown')
                     l_qty = l_node.get('quantity', 0)
                     
-                    # Look up Type from CSV, then Rate from STORAGE_TYPES
                     l_type = location_map.get(l_name, "Unknown")
                     daily_fee = STORAGE_TYPES.get(l_type, 0.0)
 
-                    # FIXED: Ensured all brackets and parentheses are closed correctly
                     report_list.append({
                         "SKU": node.get('sku'),
                         "Location": l_name,
-                        "Type": l_type,
+                        "Storage Type": l_type,
                         "Quantity": l_qty,
-                        "Daily Rate": daily_fee,
                         "Monthly Est.": round(daily_fee * 30, 2)
                     })
 
-    # Display Results
     if report_list:
         df = pd.DataFrame(report_list)
         total_monthly = df["Monthly Est."].sum()
         
-        c1, c2 = st.columns(2)
-        c1.metric(f"Total Monthly Storage ({selected_tag})", f"${total_monthly:,.2f}")
-        c2.metric("Target Cost", "$0.65/cuft Avg")
+        col1, col2 = st.columns(2)
+        col1.metric(f"Total Monthly Cost ({selected_tag})", f"${total_monthly:,.2f}")
+        col2.metric("Target Metric", "$0.65/cuft Avg")
 
         st.dataframe(df, use_container_width=True)
         st.download_button("Download CSV Report", df.to_csv(index=False), "storage_report.csv", "text/csv")
     else:
-        st.info(f"No active inventory found for items tagged: {selected_tag}")
-
+        st.info(f"No active inventory for items tagged: {selected_tag}")
 else:
-    st.error("API Connection Error. Verify your SHIPHERO_TOKEN in Streamlit Secrets.")
+    st.error("API Connection Error. Verify your SHIPHERO_TOKEN.")
