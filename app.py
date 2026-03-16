@@ -1,13 +1,36 @@
 import streamlit as st
 import pandas as pd
 import requests
-from rates import STORAGE_RATES
 
-# ShipHero API Configuration (Uses Streamlit Secrets)
+# 1. Access the API Key from Streamlit's Cloud Settings
+# You will set this up in the Streamlit Cloud dashboard in the next step
 SHIPHERO_API_URL = "https://public-api.shiphero.com/graphql"
-HEADERS = {"Authorization": f"Bearer {st.secrets['SHIPHERO_TOKEN']}"}
+token = st.secrets["SHIPHERO_TOKEN"]
+HEADERS = {"Authorization": f"Bearer {token}"}
 
-def fetch_backmarket_inventory():
+# 2. Daily Rate Card (Mapped from your PDF)
+# These rates aggregate to Ryan's $0.65/cuft target over 30 days
+STORAGE_RATES = {
+    "Standard Bin": 0.0442,
+    "Blue Bin Small": 0.0488,
+    "Blue Bin Medium": 0.1462,
+    "Blue Bin Large": 0.2925,
+    "Gray Bin Small": 0.1846,
+    "Gray Bin Medium": 0.2275,
+    "Gray Bin Large": 0.325,
+    "Pallet": 2.093,
+    "Pallet Large": 2.652,
+    "Pallet Small": 0.5902,
+    "Half Pallet": 1.0472,
+    "Tractor Trailer Load Floor": 52.00,
+    "Wall - Back": 12.116,
+    "Wall - Front": 4.4096
+}
+
+st.title("📦 Backmarket Storage Report")
+
+# 3. ShipHero API Call
+def fetch_data():
     query = """
     query {
       products(tags: ["backmarket"]) {
@@ -15,7 +38,6 @@ def fetch_backmarket_inventory():
           edges {
             node {
               sku
-              name
               warehouse_products {
                 locations(first: 50) {
                   edges {
@@ -32,40 +54,38 @@ def fetch_backmarket_inventory():
       }
     }
     """
-    response = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS)
-    return response.json()
+    try:
+        r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS)
+        return r.json()
+    except Exception as e:
+        st.error(f"Connection Error: {e}")
+        return None
 
-st.set_page_config(page_title="Backmarket Storage Report", layout="wide")
-st.title("📦 Storage Cost Report: 'backmarket'")
+# 4. Processing & Display
+raw_data = fetch_data()
 
-# Logic to process and match locations to rates
-data = fetch_backmarket_inventory()
-rows = []
+if raw_data and 'data' in raw_data:
+    rows = []
+    for edge in raw_data['data']['products']['data']['edges']:
+        node = edge['node']
+        for wh_prod in node['warehouse_products']:
+            for loc_edge in wh_prod['locations']['edges']:
+                loc_name = loc_edge['node']['location']['name']
+                qty = loc_edge['node']['quantity']
+                
+                # Match location to rate card [cite: 5, 10, 24, 64]
+                daily_rate = next((rate for key, rate in STORAGE_RATES.items() if key in loc_name), 0.0)
+                
+                rows.append({
+                    "SKU": node['sku'],
+                    "Location": loc_name,
+                    "Quantity": qty,
+                    "Daily Cost": f"${daily_rate:.4f}",
+                    "Est. Monthly": round(daily_rate * 30, 2)
+                })
 
-for edge in data['data']['products']['data']['edges']:
-    node = edge['node']
-    for wh_prod in node['warehouse_products']:
-        for loc_edge in wh_prod['locations']['edges']:
-            loc_name = loc_edge['node']['location']['name']
-            qty = loc_edge['node']['quantity']
-            
-            # Find the best match in our rate card
-            daily_rate = next((rate for key, rate in STORAGE_RATES.items() if key in loc_name), 0.0)
-            
-            rows.append({
-                "SKU": node['sku'],
-                "Location": loc_name,
-                "Qty": qty,
-                "Daily Cost": daily_rate,
-                "Monthly (30 Day)": round(daily_rate * 30, 2)
-            })
-
-df = pd.DataFrame(rows)
-
-# Dashboard Display
-m1, m2 = st.columns(2)
-total_monthly = df["Monthly (30 Day)"].sum()
-m1.metric("Total Monthly Estimate", f"${total_monthly:,.2/f}")
-m2.metric("Target (Ryan's Calc)", "$0.65/cuft Avg")
-
-st.dataframe(df, use_container_width=True)
+    df = pd.DataFrame(rows)
+    st.metric("Total Monthly Storage (Est.)", f"${df['Est. Monthly'].sum():,.2f}")
+    st.dataframe(df, use_container_width=True)
+else:
+    st.warning("No data found or API key is invalid.")
