@@ -9,37 +9,37 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS to minimize all top padding and pull content up
+# Refined CSS: Removed the clipping and balanced the top spacing
 st.markdown("""
     <style>
-    /* Remove default Streamlit padding at the top of the page */
+    /* Adjusting the main container to prevent clipping */
     .block-container {
-        padding-top: 0rem;
+        padding-top: 1rem; /* Added small padding back to stop cutoff */
         padding-bottom: 0rem;
-        margin-top: -20px;
+        margin-top: 0px;
     }
     [data-testid="stHeader"] {
         background-color: #0e1117;
         height: 0px;
     }
-    /* Logo container spacing */
+    /* Logo container: removed negative margins that caused the crop */
     .logo-container {
         display: flex;
         justify-content: center;
         background-color: #0e1117;
-        padding: 0px;
-        margin-top: 0px;
-        margin-bottom: -10px;
+        padding: 10px 0px; 
+        margin-bottom: 0px;
     }
-    /* Tighten the title spacing */
+    /* Pull the title up slightly without affecting the logo */
     h1 {
-        margin-top: -30px !important;
+        margin-top: -15px !important;
         padding-top: 0px !important;
+        text-align: center;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# Centered and Scaled Down Logo
+# Centered Logo Display
 st.markdown('<div class="logo-container">', unsafe_allow_html=True)
 st.image("VP Logo Horizontal Transparent White Lettering.png", width=250)
 st.markdown('</div>', unsafe_allow_html=True)
