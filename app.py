@@ -15,7 +15,8 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# --- 2. STORAGE RATE CARD (From your Billing Profile PDF) ---
+# --- 2. STORAGE RATE CARD ---
+# Data derived from provided Billing Profile documentation 
 STORAGE_TYPES = {
     "Standard Bin": 0.0442,
     "Bin": 0.0442,
@@ -50,11 +51,14 @@ STORAGE_TYPES = {
 @st.cache_data
 def get_location_lookup():
     try:
-        # Matches your exact GitHub filename
+        # Reference to the user-uploaded CSV file containing Location-to-Type mapping
         df = pd.read_csv("ShipHero - Location Names and Info.csv")
         return dict(zip(df['Location'], df['Type']))
     except FileNotFoundError:
         st.error("❌ The file 'ShipHero - Location Names and Info.csv' was not found on GitHub.")
+        return {}
+    except Exception as e:
+        st.error(f"Error loading CSV: {e}")
         return {}
 
 location_map = get_location_lookup()
@@ -62,6 +66,7 @@ location_map = get_location_lookup()
 # --- 4. API DATA FETCHING ---
 @st.cache_data(ttl=300)
 def fetch_shiphero_data():
+    # Query structure follows ShipHero GraphQL standards for product and location connections [cite: 1]
     query = """
     query {
       products {
@@ -89,8 +94,13 @@ def fetch_shiphero_data():
     """
     try:
         r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS)
-        return r.json() if r.status_code == 200 else None
-    except:
+        if r.status_code == 200:
+            return r.json()
+        else:
+            st.error(f"API Error: {r.status_code}")
+            return None
+    except Exception as e:
+        st.error(f"Connection failed: {e}")
         return None
 
 # --- 5. APP INTERFACE ---
@@ -100,32 +110,58 @@ st.title("📦 Storage Cost Report")
 data_response = fetch_shiphero_data()
 
 if data_response and 'data' in data_response:
-    product_edges = data_response.get('data', {}).get('products', {}).get('data', {}).get('edges', [])
+    product_connection = data_response.get('data', {}).get('products', {}).get('data', {})
+    product_edges = product_connection.get('edges', [])
     
     if not product_edges:
         st.warning("No products found in the account.")
         st.stop()
 
-    # 1. Gather Tags for the Dropdown
+    # Gather Tags for the Dropdown
     available_tags = sorted(list({t for e in product_edges for t in e['node'].get('tags', []) if t}))
     selected_tag = st.sidebar.selectbox("Filter by Product Tag", ["Show All"] + available_tags)
 
-    # 2. Process and Filter Data
+    # Process and Filter Data
     report_list = []
     for edge in product_edges:
-        node = edge['node']
+        node = edge.get('node', {})
         node_tags = node.get('tags', [])
         
         if selected_tag == "Show All" or selected_tag in node_tags:
             for wh_prod in node.get('warehouse_products', []):
-                for loc_edge in wh_prod.get('locations', {}).get('edges', []):
-                    l_name = loc_edge['node']['location']['name']
-                    l_qty = loc_edge['node']['quantity']
+                loc_edges = wh_prod.get('locations', {}).get('edges', [])
+                for loc_edge in loc_edges:
+                    l_node = loc_edge.get('node', {})
+                    l_name = l_node.get('location', {}).get('name', 'Unknown')
+                    l_qty = l_node.get('quantity', 0)
                     
                     # Look up Type from CSV, then Rate from STORAGE_TYPES
                     l_type = location_map.get(l_name, "Unknown")
                     daily_fee = STORAGE_TYPES.get(l_type, 0.0)
 
+                    # FIXED: Ensured all brackets and parentheses are closed correctly
                     report_list.append({
                         "SKU": node.get('sku'),
                         "Location": l_name,
+                        "Type": l_type,
+                        "Quantity": l_qty,
+                        "Daily Rate": daily_fee,
+                        "Monthly Est.": round(daily_fee * 30, 2)
+                    })
+
+    # Display Results
+    if report_list:
+        df = pd.DataFrame(report_list)
+        total_monthly = df["Monthly Est."].sum()
+        
+        c1, c2 = st.columns(2)
+        c1.metric(f"Total Monthly Storage ({selected_tag})", f"${total_monthly:,.2f}")
+        c2.metric("Target Cost", "$0.65/cuft Avg")
+
+        st.dataframe(df, use_container_width=True)
+        st.download_button("Download CSV Report", df.to_csv(index=False), "storage_report.csv", "text/csv")
+    else:
+        st.info(f"No active inventory found for items tagged: {selected_tag}")
+
+else:
+    st.error("API Connection Error. Verify your SHIPHERO_TOKEN in Streamlit Secrets.")
