@@ -9,25 +9,39 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS for a compact, dark header and centered white logo
+# Custom CSS to minimize all top padding and pull content up
 st.markdown("""
     <style>
+    /* Remove default Streamlit padding at the top of the page */
+    .block-container {
+        padding-top: 0rem;
+        padding-bottom: 0rem;
+        margin-top: -20px;
+    }
     [data-testid="stHeader"] {
         background-color: #0e1117;
+        height: 0px;
     }
+    /* Logo container spacing */
     .logo-container {
         display: flex;
         justify-content: center;
         background-color: #0e1117;
-        padding: 5px 0px; /* Reduced padding to save space */
-        margin-bottom: 10px;
+        padding: 0px;
+        margin-top: 0px;
+        margin-bottom: -10px;
+    }
+    /* Tighten the title spacing */
+    h1 {
+        margin-top: -30px !important;
+        padding-top: 0px !important;
     }
     </style>
     """, unsafe_allow_html=True)
 
 # Centered and Scaled Down Logo
 st.markdown('<div class="logo-container">', unsafe_allow_html=True)
-st.image("VP Logo Horizontal Transparent White Lettering.png", width=250) # Smaller width
+st.image("VP Logo Horizontal Transparent White Lettering.png", width=250)
 st.markdown('</div>', unsafe_allow_html=True)
 
 SHIPHERO_API_URL = "https://public-api.shiphero.com/graphql"
