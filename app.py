@@ -23,9 +23,10 @@ st.markdown("""
         border-radius: 10px;
         margin-bottom: 20px;
     }
-    /* Styling the sidebar table to be compact */
-    [data-testid="stSidebar"] .stTable {
-        font-size: 12px;
+    /* Hide the index column for tables in the sidebar */
+    [data-testid="stSidebar"] table thead tr th:first-child, 
+    [data-testid="stSidebar"] table tbody tr th:first-child {
+        display: none;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -155,7 +156,6 @@ if data_response and 'data' in data_response:
                 for loc_edge in loc_edges:
                     l_node = loc_edge.get('node', {})
                     l_name = l_node.get('location', {}).get('name', 'Unknown')
-                    # Inventory quantity (items inside)
                     inv_qty = l_node.get('quantity', 0)
                     
                     l_type = location_map.get(l_name, "Unknown")
@@ -174,11 +174,11 @@ if data_response and 'data' in data_response:
         df = pd.DataFrame(report_list)
         total_monthly = df["Monthly Est."].sum()
         
-        # --- Sidebar Summary Table (Requested Change) ---
+        # --- Sidebar Summary Table ---
         st.sidebar.markdown("---")
         st.sidebar.subheader("Cost Breakdown")
         
-        # Aggregate data for the summary table
+        # Aggregate data: Count unique locations and sum costs
         summary_df = df.groupby("Storage Type").agg(
             Quantity=('Location', 'count'),
             Total_Cost=('Monthly Est.', 'sum')
@@ -187,9 +187,10 @@ if data_response and 'data' in data_response:
         # Reorder columns: Quantity, Storage Type, Total Cost
         summary_df = summary_df[['Quantity', 'Storage Type', 'Total_Cost']]
         
-        # Format the Total Cost as currency for the table
+        # Format for display
         summary_df['Total_Cost'] = summary_df['Total_Cost'].map('${:,.2f}'.format)
         
+        # We use st.write with CSS to hide the index, or st.table
         st.sidebar.table(summary_df)
 
         # --- Main Dashboard ---
@@ -197,11 +198,13 @@ if data_response and 'data' in data_response:
         col1.metric(f"Total Monthly Cost ({selected_tag})", f"${total_monthly:,.2f}")
         col2.metric("Target Metric", "$0.65/cuft Avg")
 
-        # Update main dataframe column names for clarity
+        # Table Display (Main Area)
+        # To keep row numbers hidden in the main dataframe, we use st.dataframe(hide_index=True)
         main_display_df = df.copy()
         main_display_df["Monthly Est."] = main_display_df["Monthly Est."].map('${:,.2f}'.format)
+        main_display_df["Daily Rate"] = main_display_df["Daily Rate"].map('${:,.4f}'.format)
         
-        st.dataframe(main_display_df, use_container_width=True)
+        st.dataframe(main_display_df, use_container_width=True, hide_index=True)
         st.download_button("Download CSV Report", df.to_csv(index=False), "storage_report.csv", "text/csv")
     else:
         st.info(f"No active inventory for items tagged: {selected_tag}")
