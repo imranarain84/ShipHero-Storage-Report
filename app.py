@@ -15,36 +15,35 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# --- 2. STORAGE RATE CARD ---
-# Extracted from Billing Profiles
+# --- 2. STORAGE RATE CARD (Refined Keywords) ---
+# We use shorter keywords to increase the chance of a match
 STORAGE_RATES = {
-    "Standard Bin": 0.0442,
-    "Blue Bin Small": 0.0488,
-    "Blue Bin Medium": 0.1462,
-    "Blue Bin Large": 0.2925,
-    "Gray Bin Small": 0.1846,
-    "Gray Bin Medium": 0.2275,
-    "Gray Bin Large": 0.325,
-    "Pallet": 2.093,
-    "Pallet Tall": 2.7274,
-    "Pallet Large": 2.652,
-    "Pallet Medium Large": 1.7914,
-    "Pallet Medium Small": 1.443,
-    "Pallet Small Large": 0.9581,
-    "Pallet Small": 0.5902,
-    "Half Pallet": 1.0472,
-    "Tractor Trailer Load Floor": 52.00,
-    "Wall - Back": 12.116,
-    "Wall - Front": 4.4096,
-    "Pallite 16": 0.0537,
-    "Pallite 48": 0.0357,
-    "DT - Pallet": 2.2074
+    "standard bin": 0.0442,
+    "blue bin small": 0.0488,
+    "blue bin medium": 0.1462,
+    "blue bin large": 0.2925,
+    "gray bin small": 0.1846,
+    "gray bin medium": 0.2275,
+    "gray bin large": 0.325,
+    "pallet tall": 2.7274,
+    "pallet large": 2.652,
+    "pallet medium large": 1.7914,
+    "pallet medium small": 1.443,
+    "pallet small large": 0.9581,
+    "pallet small": 0.5902,
+    "pallet": 2.093,             # Generic 'pallet' must come after specific sizes
+    "half pallet": 1.0472,
+    "tractor trailer": 52.00,
+    "wall - back": 12.116,
+    "wall - front": 4.4096,
+    "pallite 16": 0.0537,
+    "pallite 48": 0.0357,
+    "dt-pallet": 2.2074
 }
 
 # --- 3. API DATA FETCHING ---
 @st.cache_data(ttl=300)
 def fetch_shiphero_data():
-    # Adjusted query: 'first' is moved inside 'data' where the schema expects it
     query = """
     query {
       products {
@@ -55,7 +54,7 @@ def fetch_shiphero_data():
               name
               tags
               warehouse_products {
-                locations(first: 20) {
+                locations(first: 25) {
                   edges {
                     node {
                       quantity
@@ -72,19 +71,14 @@ def fetch_shiphero_data():
     """
     try:
         response = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS)
-        
         if response.status_code != 200:
-            st.error(f"ShipHero API Error {response.status_code}")
-            st.code(response.text)
             return None
-            
         return response.json()
-    except Exception as e:
-        st.error(f"Connection failed: {e}")
+    except:
         return None
 
 # --- 4. APP INTERFACE ---
-st.set_page_config(page_title="Storage Report", layout="wide")
+st.set_page_config(page_title="Storage Cost Report", layout="wide")
 st.title("📦 Storage Cost Report")
 
 data_response = fetch_shiphero_data()
@@ -94,42 +88,50 @@ if data_response and 'data' in data_response:
     product_edges = product_root.get('data', {}).get('edges', []) if product_root else []
     
     if not product_edges:
-        st.warning("No products found or connection returned empty results.")
+        st.warning("No products found in the ShipHero account.")
         st.stop()
 
-    # Collect unique tags
+    # Tag & Location Audit
     available_tags = set()
-    for edge in product_edges:
-        tags = edge.get('node', {}).get('tags', [])
-        for t in tags:
-            if t: available_tags.add(t)
+    all_location_names = set()
     
-    sorted_tags = sorted(list(available_tags))
-
+    for edge in product_edges:
+        node = edge.get('node', {})
+        for t in node.get('tags', []):
+            if t: available_tags.add(t)
+        for wh_prod in node.get('warehouse_products', []):
+            for loc_edge in wh_prod.get('locations', {}).get('edges', []):
+                all_location_names.add(loc_edge['node']['location']['name'])
+    
     # Sidebar
-    st.sidebar.header("Navigation")
-    selected_tag = st.sidebar.selectbox("Filter by Product Tag", ["Show All"] + sorted_tags)
+    st.sidebar.header("Filters")
+    selected_tag = st.sidebar.selectbox("Select Product Tag", ["Show All"] + sorted(list(available_tags)))
 
     report_list = []
+    unmatched_locations = set()
+
     for edge in product_edges:
         node = edge.get('node', {})
         node_tags = node.get('tags', [])
         
         if selected_tag == "Show All" or selected_tag in node_tags:
             for wh_prod in node.get('warehouse_products', []):
-                loc_edges = wh_prod.get('locations', {}).get('edges', [])
-                for loc_edge in loc_edges:
-                    l_node = loc_edge.get('node', {})
-                    l_name = l_node.get('location', {}).get('name', 'Unknown')
-                    l_qty = l_node.get('quantity', 0)
+                for loc_edge in wh_prod.get('locations', {}).get('edges', []):
+                    l_name = loc_edge['node']['location']['name']
+                    l_qty = loc_edge['node']['quantity']
                     
-                    # Rate Mapping
+                    # Match Logic
                     daily_fee = 0.0
+                    matched = False
                     for key, fee in STORAGE_RATES.items():
                         if key.lower() in l_name.lower():
                             daily_fee = fee
+                            matched = True
                             break
                     
+                    if not matched:
+                        unmatched_locations.add(l_name)
+
                     report_list.append({
                         "SKU": node.get('sku'),
                         "Location": l_name,
@@ -142,14 +144,25 @@ if data_response and 'data' in data_response:
         df = pd.DataFrame(report_list)
         total_monthly = df["Monthly Est."].sum()
         
-        st.metric(f"Total Monthly Storage ({selected_tag})", f"${total_monthly:,.2f}")
+        # Display Totals
+        col1, col2 = st.columns(2)
+        col1.metric("Total Monthly Cost", f"${total_monthly:,.2f}")
+        col2.metric("Items Found", len(df))
+        
+        st.write(f"### Results for Tag: `{selected_tag}`")
         st.dataframe(df, use_container_width=True)
+
+        # DEBUG SECTION: If total is 0, help the user see why
+        if total_monthly == 0 and not df.empty:
+            st.error("⚠️ The total cost is $0.00 because your ShipHero location names don't match our 'Rate Keywords'.")
+            with st.expander("🔍 See Unmatched Location Names"):
+                st.write("The app found these locations, but doesn't know what to charge for them. Please tell us which ones are Bins or Pallets:")
+                st.write(list(unmatched_locations))
         
         csv_data = df.to_csv(index=False).encode('utf-8')
         st.download_button("Download CSV", csv_data, "storage_report.csv", "text/csv")
     else:
-        st.info(f"No inventory records for items tagged: {selected_tag}")
+        st.info(f"No active inventory found for items tagged: {selected_tag}")
 
-elif data_response and 'errors' in data_response:
-    st.error("GraphQL Errors Detected:")
-    st.json(data_response['errors'])
+else:
+    st.error("No data received from API. Please check your token.")
