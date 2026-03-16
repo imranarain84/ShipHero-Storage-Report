@@ -15,14 +15,14 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# --- 2. STORAGE RATE CARD (From Billing Profile PDF) ---
-# Extracted from your provided billing documentation [cite: 5, 10, 20, 24, 29, 34, 39, 43, 48, 54, 59, 64, 69, 73, 79, 84, 89, 94, 98, 104, 109]
+# --- 2. STORAGE RATE CARD (Extracted from Billing Profile) ---
+# [cite: 5, 10, 15, 20, 24, 29, 34, 39, 44, 48, 54, 59, 64, 69, 73, 79, 84, 89, 94, 98, 104, 109]
 STORAGE_RATES = {
-    "Standard Bin": 0.0442,      # [cite: 10]
+    "Standard Bin": 0.0442,      # [cite: 10, 15]
     "Blue Bin Small": 0.0488,    # [cite: 39]
     "Blue Bin Medium": 0.1462,   # [cite: 34]
     "Blue Bin Large": 0.2925,    # [cite: 29]
-    "Gray Bin Small": 0.1846,    # [cite: 43]
+    "Gray Bin Small": 0.1846,    # [cite: 44]
     "Gray Bin Medium": 0.2275,   # [cite: 48]
     "Gray Bin Large": 0.325,     # [cite: 54]
     "Pallet": 2.093,             # [cite: 5]
@@ -36,25 +36,26 @@ STORAGE_RATES = {
     "Tractor Trailer Load Floor": 52.00, # [cite: 24]
     "Wall - Back": 12.116,       # [cite: 89]
     "Wall - Front": 4.4096,      # [cite: 99]
-    "Pallite 16": 0.0537,        # 
-    "Pallite 48": 0.0357,        # 
-    "DT - Pallet": 2.2074        # 
+    "Pallite 16": 0.0537,        #
+    "Pallite 48": 0.0357,        #
+    "DT - Pallet": 2.2074        # [cite: 104, 109]
 }
 
 # --- 3. API DATA FETCHING ---
-@st.cache_data(ttl=600) # Caches data for 10 minutes to stay within API limits
+@st.cache_data(ttl=300)
 def fetch_shiphero_data():
     query = """
     query {
-      products {
-        data(first: 250) {
+      products(first: 100) {
+        data {
           edges {
             node {
               sku
               name
               tags
               warehouse_products {
-                locations(first: 50) {
+                warehouse_id
+                locations(first: 20) {
                   edges {
                     node {
                       quantity
@@ -72,77 +73,87 @@ def fetch_shiphero_data():
     try:
         r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS)
         if r.status_code != 200:
+            st.error(f"HTTP Error {r.status_code}")
             return None
         return r.json()
-    except:
+    except Exception as e:
+        st.error(f"Request failed: {e}")
         return None
 
 # --- 4. APP INTERFACE ---
-st.set_page_config(page_title="Storage Cost Report", layout="wide")
-st.title("📦 Dynamic Storage Cost Report")
+st.set_page_config(page_title="Storage Report", layout="wide")
+st.title("📦 Storage Cost Report")
 
-raw_data = fetch_shiphero_data()
+raw_json = fetch_shiphero_data()
 
-if raw_data and 'data' in raw_data:
-    all_products = raw_data['data']['products']['data']['edges']
+# Defensive check: Ensure raw_json and 'data' exist
+if raw_json and 'data' in raw_json and raw_json['data'] and 'products' in raw_json['data']:
     
-    # Extract unique tags for the dropdown
+    # Safely navigate the nested dictionary
+    product_connection = raw_json['data']['products']
+    if product_connection and 'data' in product_connection:
+        all_products = product_connection['data'].get('edges', [])
+    else:
+        all_products = []
+    
+    if not all_products:
+        st.warning("No products returned from the API.")
+        st.stop()
+
+    # Extract unique tags
     unique_tags = set()
     for edge in all_products:
-        for tag in edge['node'].get('tags', []):
+        node = edge.get('node', {})
+        for tag in node.get('tags', []):
             if tag: unique_tags.add(tag)
     
     sorted_tags = sorted(list(unique_tags))
     
-    # Dropdown Menu in Sidebar
-    st.sidebar.header("Filter Settings")
-    selected_tag = st.sidebar.selectbox("Select Product Tag", sorted_tags if sorted_tags else ["No Tags Found"])
+    # Sidebar Selection
+    st.sidebar.header("Filters")
+    selected_tag = st.sidebar.selectbox("Filter by Product Tag", ["Select a Tag"] + sorted_tags)
 
-    filtered_rows = []
+    if selected_tag != "Select a Tag":
+        report_data = []
+        for edge in all_products:
+            node = edge.get('node', {})
+            tags = node.get('tags', [])
+            
+            if selected_tag in tags:
+                for wh_prod in node.get('warehouse_products', []):
+                    # Ensure locations exist
+                    loc_connection = wh_prod.get('locations', {})
+                    if loc_connection and 'edges' in loc_connection:
+                        for loc_edge in loc_connection['edges']:
+                            loc_node = loc_edge.get('node', {})
+                            loc_name = loc_node.get('location', {}).get('name', 'Unknown')
+                            qty = loc_node.get('quantity', 0)
+                            
+                            # Match Rate
+                            daily_rate = 0.0
+                            for key, rate in STORAGE_RATES.items():
+                                if key.lower() in loc_name.lower():
+                                    daily_rate = rate
+                                    break
+                            
+                            report_data.append({
+                                "SKU": node.get('sku'),
+                                "Location": loc_name,
+                                "Quantity": qty,
+                                "Daily Cost": daily_rate,
+                                "Monthly Est.": round(daily_rate * 30, 2)
+                            })
 
-    for edge in all_products:
-        node = edge['node']
-        tags = node.get('tags', [])
-        
-        if selected_tag in tags:
-            for wh_prod in node.get('warehouse_products', []):
-                for loc_edge in wh_prod.get('locations', {}).get('edges', []):
-                    loc_name = loc_edge['node']['location']['name']
-                    qty = loc_edge['node']['quantity']
-                    
-                    # Match location keyword to rate card
-                    daily_rate = 0.0
-                    for key, rate in STORAGE_RATES.items():
-                        if key.lower() in loc_name.lower():
-                            daily_rate = rate
-                            break
-                    
-                    filtered_rows.append({
-                        "SKU": node['sku'],
-                        "Product Name": node['name'],
-                        "Location": loc_name,
-                        "Quantity": qty,
-                        "Daily Rate": daily_rate,
-                        "Est. Monthly (30 Day)": round(daily_rate * 30, 2)
-                    })
-
-    if filtered_rows:
-        df = pd.DataFrame(filtered_rows)
-        
-        # Summary Metrics
-        total_monthly = df["Est. Monthly (30 Day)"].sum()
-        c1, c2 = st.columns(2)
-        c1.metric(f"Total Monthly Storage: {selected_tag}", f"${total_monthly:,.2f}")
-        c2.metric("Target Unit Rate", "$0.65/cuft Avg")
-
-        # Table
-        st.dataframe(df, use_container_width=True)
-        
-        # CSV Export
-        csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button(f"Download {selected_tag} Report", csv, f"{selected_tag}_storage.csv", "text/csv")
+        if report_data:
+            df = pd.DataFrame(report_data)
+            st.metric(f"Total Monthly Cost for {selected_tag}", f"${df['Monthly Est.'].sum():,.2f}")
+            st.dataframe(df, use_container_width=True)
+        else:
+            st.info(f"No inventory found for products tagged '{selected_tag}'.")
     else:
-        st.info("Select a tag from the sidebar to view storage costs.")
+        st.info("Please select a tag in the sidebar to generate the report.")
 
 else:
-    st.error("Unable to connect to ShipHero API. Please check your token in Streamlit Secrets.")
+    st.error("The API returned an unexpected format. Please check the 'Manage App' logs in Streamlit.")
+    if raw_json and 'errors' in raw_json:
+        st.json(raw_json['errors'])
