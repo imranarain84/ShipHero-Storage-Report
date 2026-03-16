@@ -44,7 +44,6 @@ HEADERS = {
 }
 
 # --- 2. STORAGE RATE CARD ---
-# Daily rates extracted from Billing Profiles [cite: 5-20, 55-84, 94, 104]
 STORAGE_TYPES = {
     "Standard Bin": 0.0442,
     "Bin": 0.0442,
@@ -79,7 +78,6 @@ STORAGE_TYPES = {
 @st.cache_data
 def get_location_lookup():
     try:
-        # Loading your combined CSV mapping file
         df = pd.read_csv("ShipHero - Location Names and Info.csv")
         return dict(zip(df['Location'], df['Type']))
     except Exception as e:
@@ -171,16 +169,21 @@ if data_response and 'data' in data_response:
         df = pd.DataFrame(report_list)
         total_monthly = df["Monthly Est."].sum()
         
-        # --- Sidebar Chart ---
+        # --- Sidebar Occupancy Chart (Modified for Quantity) ---
         st.sidebar.markdown("---")
-        st.sidebar.subheader("Cost Breakdown")
-        # Group by Storage Type for the bar chart
-        chart_data = df.groupby("Storage Type")["Monthly Est."].sum().sort_values(ascending=False)
-        st.sidebar.bar_chart(chart_data)
+        st.sidebar.subheader("Storage Type Usage")
+        
+        # We count the number of locations for each storage type
+        # Using .size() gives us the count of storage units occupied
+        usage_counts = df.groupby("Storage Type").size().sort_values(ascending=False)
+        
+        # Update chart to show quantity
+        st.sidebar.bar_chart(usage_counts)
+        st.sidebar.info("Chart shows the total count of locations occupied per type.")
 
         # --- Main Dashboard ---
         col1, col2 = st.columns(2)
-        col1.metric(f"Total Monthly Storage ({selected_tag})", f"${total_monthly:,.2f}")
+        col1.metric(f"Total Monthly Cost ({selected_tag})", f"${total_monthly:,.2f}")
         col2.metric("Target Metric", "$0.65/cuft Avg")
 
         st.dataframe(df, use_container_width=True)
@@ -188,4 +191,4 @@ if data_response and 'data' in data_response:
     else:
         st.info(f"No active inventory for items tagged: {selected_tag}")
 else:
-    st.error("API Connection Error. Verify your SHIPHERO_TOKEN in Secrets.")
+    st.error("API Connection Error. Verify your SHIPHERO_TOKEN.")
