@@ -9,7 +9,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS for branding and layout
+# Custom CSS for a compact, dark header and centered white logo
 st.markdown("""
     <style>
     [data-testid="stHeader"] {
@@ -19,16 +19,15 @@ st.markdown("""
         display: flex;
         justify-content: center;
         background-color: #0e1117;
-        padding: 20px;
-        border-radius: 10px;
-        margin-bottom: 20px;
+        padding: 5px 0px; /* Reduced padding to save space */
+        margin-bottom: 10px;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# Centered Logo Display
+# Centered and Scaled Down Logo
 st.markdown('<div class="logo-container">', unsafe_allow_html=True)
-st.image("VP Logo Horizontal Transparent White Lettering.png", width=400)
+st.image("VP Logo Horizontal Transparent White Lettering.png", width=250) # Smaller width
 st.markdown('</div>', unsafe_allow_html=True)
 
 SHIPHERO_API_URL = "https://public-api.shiphero.com/graphql"
@@ -174,17 +173,13 @@ if data_response and 'data' in data_response:
         st.sidebar.markdown("---")
         st.sidebar.subheader("Cost Breakdown")
         
-        # Aggregate data
         summary_df = df.groupby("Storage Type").agg(
             Quantity=('Location', 'count'),
             Total_Cost=('Monthly Est.', 'sum')
         ).reset_index()
         
-        # Reorder columns: Quantity first
         summary_df = summary_df[['Quantity', 'Storage Type', 'Total_Cost']]
         
-        # Create a display version with currency formatting
-        # Note: We keep the numbers raw in the st.dataframe so the built-in sorting works correctly
         st.sidebar.dataframe(
             summary_df, 
             use_container_width=True, 
@@ -199,7 +194,6 @@ if data_response and 'data' in data_response:
         col1.metric(f"Total Monthly Cost ({selected_tag})", f"${total_monthly:,.2f}")
         col2.metric("Target Metric", "$0.65/cuft Avg")
 
-        # Table Display (Main Area)
         st.dataframe(
             df, 
             use_container_width=True, 
