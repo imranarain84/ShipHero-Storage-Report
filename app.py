@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import requests
+from datetime import date
 
 # --- 1. CONFIGURATION, SECRETS & BRANDING ---
 st.set_page_config(
@@ -9,97 +10,67 @@ st.set_page_config(
     layout="wide"
 )
 
-# Refined CSS: Removed the clipping and balanced the top spacing
+# CSS for a tight, professional layout
 st.markdown("""
     <style>
-    /* Adjusting the main container to prevent clipping */
     .block-container {
-        padding-top: 1rem; /* Added small padding back to stop cutoff */
+        padding-top: 1rem;
         padding-bottom: 0rem;
-        margin-top: 0px;
     }
     [data-testid="stHeader"] {
         background-color: #0e1117;
         height: 0px;
     }
-    /* Logo container: removed negative margins that caused the crop */
     .logo-container {
         display: flex;
         justify-content: center;
         background-color: #0e1117;
         padding: 10px 0px; 
-        margin-bottom: 0px;
     }
-    /* Pull the title up slightly without affecting the logo */
     h1 {
         margin-top: -15px !important;
-        padding-top: 0px !important;
         text-align: center;
     }
+    /* Hide Streamlit Menu and Footer for a standalone look */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
     </style>
     """, unsafe_allow_html=True)
 
-# Centered Logo Display
+# Centered Logo
 st.markdown('<div class="logo-container">', unsafe_allow_html=True)
 st.image("VP Logo Horizontal Transparent White Lettering.png", width=250)
 st.markdown('</div>', unsafe_allow_html=True)
 
 SHIPHERO_API_URL = "https://public-api.shiphero.com/graphql"
-
-if "SHIPHERO_TOKEN" not in st.secrets:
-    st.error("❌ 'SHIPHERO_TOKEN' not found in Streamlit Secrets.")
-    st.stop()
-
-token = st.secrets["SHIPHERO_TOKEN"]
-HEADERS = {
-    "Authorization": f"Bearer {token}",
-    "Content-Type": "application/json"
-}
+token = st.secrets.get("SHIPHERO_TOKEN")
+HEADERS = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 # --- 2. STORAGE RATE CARD ---
 STORAGE_TYPES = {
-    "Standard Bin": 0.0442,
-    "Bin": 0.0442,
-    "Blue Bin Small": 0.0488,
-    "Blue Bin Medium": 0.1462,
-    "Blue Bin Large": 0.2925,
-    "Gray Bin Small": 0.1846,
-    "Gray Bin Medium": 0.2275,
-    "Gray Bin Large": 0.325,
-    "Pallet": 2.093,
-    "Pallet Tall": 2.7274,
-    "Pallet TALL": 2.7274,
-    "Pallet Large": 2.652,
-    "Pallet Medium Large": 1.7914,
-    "Pallet Medium Small": 1.443,
-    "Pallet Small Large": 0.9581,
-    "Pallet Small": 0.5902,
-    "Half Pallet": 1.0472,
-    "Tractor Trailer Load Floor Storage": 52.00,
-    "Wall - Back": 12.116,
-    "Wall - Front": 4.4096,
-    "Pallite_16": 0.0537,
-    "Pallite - 48": 0.0357,
-    "Pallite_48": 0.0357,
-    "Palite_48": 0.0357,
-    "Jumbo Receiving Pallet": 3.90,
-    "HD": 2.275,
-    "DT - Pallet": 2.2074
+    "Standard Bin": 0.0442, "Bin": 0.0442, "Blue Bin Small": 0.0488, 
+    "Blue Bin Medium": 0.1462, "Blue Bin Large": 0.2925, "Gray Bin Small": 0.1846,
+    "Gray Bin Medium": 0.2275, "Gray Bin Large": 0.325, "Pallet": 2.093,
+    "Pallet Tall": 2.7274, "Pallet TALL": 2.7274, "Pallet Large": 2.652,
+    "Pallet Medium Large": 1.7914, "Pallet Medium Small": 1.443,
+    "Pallet Small Large": 0.9581, "Pallet Small": 0.5902, "Half Pallet": 1.0472,
+    "Tractor Trailer Load Floor Storage": 52.00, "Wall - Back": 12.116,
+    "Wall - Front": 4.4096, "Pallite_16": 0.0537, "Pallite - 48": 0.0357,
+    "Pallite_48": 0.0357, "Palite_48": 0.0357, "Jumbo Receiving Pallet": 3.90,
+    "HD": 2.275, "DT - Pallet": 2.2074
 }
 
-# --- 3. LOAD LOCATION DATA ---
+# --- 3. LOAD DATA ---
 @st.cache_data
 def get_location_lookup():
     try:
         df = pd.read_csv("ShipHero - Location Names and Info.csv")
         return dict(zip(df['Location'], df['Type']))
-    except Exception as e:
-        st.error(f"Error loading CSV: {e}")
+    except:
         return {}
 
 location_map = get_location_lookup()
 
-# --- 4. API DATA FETCHING ---
 @st.cache_data(ttl=300)
 def fetch_shiphero_data():
     query = """
@@ -129,40 +100,42 @@ def fetch_shiphero_data():
     """
     try:
         r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS)
-        if r.status_code == 200:
-            return r.json()
-        else:
-            return None
+        return r.json() if r.status_code == 200 else None
     except:
         return None
 
-# --- 5. PROCESSING & UI ---
-st.title("📦 Warehouse Storage Report")
+# --- 4. UI & FILTERS ---
+st.sidebar.header("Report Filters")
+
+# Date Range Picker
+today = date.today()
+date_range = st.sidebar.date_input(
+    "Select Date Range",
+    value=(today.replace(day=1), today), # Default to current month start to today
+    max_value=today
+)
+
+# Calculate days in range
+if len(date_range) == 2:
+    start_date, end_date = date_range
+    num_days = (end_date - start_date).days + 1
+else:
+    num_days = 1 # Fallback if only one date is picked
 
 data_response = fetch_shiphero_data()
 
 if data_response and 'data' in data_response:
-    product_connection = data_response.get('data', {}).get('products', {}).get('data', {})
-    product_edges = product_connection.get('edges', [])
+    product_edges = data_response.get('data', {}).get('products', {}).get('data', {}).get('edges', [])
     
-    if not product_edges:
-        st.warning("No products found in the account.")
-        st.stop()
-
-    # --- Sidebar Filter ---
-    st.sidebar.header("Report Filters")
     available_tags = sorted(list({t for e in product_edges for t in e['node'].get('tags', []) if t}))
     selected_tag = st.sidebar.selectbox("Select Product Tag", ["Show All"] + available_tags)
 
     report_list = []
     for edge in product_edges:
         node = edge.get('node', {})
-        node_tags = node.get('tags', [])
-        
-        if selected_tag == "Show All" or selected_tag in node_tags:
+        if selected_tag == "Show All" or selected_tag in node.get('tags', []):
             for wh_prod in node.get('warehouse_products', []):
-                loc_edges = wh_prod.get('locations', {}).get('edges', [])
-                for loc_edge in loc_edges:
+                for loc_edge in wh_prod.get('locations', {}).get('edges', []):
                     l_node = loc_edge.get('node', {})
                     l_name = l_node.get('location', {}).get('name', 'Unknown')
                     inv_qty = l_node.get('quantity', 0)
@@ -170,54 +143,49 @@ if data_response and 'data' in data_response:
                     l_type = location_map.get(l_name, "Unknown")
                     daily_fee = STORAGE_TYPES.get(l_type, 0.0)
 
+                    # LOGIC FIX: If Quantity is 0, Total Cost is 0
+                    total_period_cost = (daily_fee * num_days) if inv_qty > 0 else 0.0
+
                     report_list.append({
                         "SKU": node.get('sku'),
                         "Location": l_name,
                         "Storage Type": l_type,
                         "Inv Qty": inv_qty,
                         "Daily Rate": daily_fee,
-                        "Monthly Est.": round(daily_fee * 30, 2)
+                        "Period Cost": round(total_period_cost, 2)
                     })
 
     if report_list:
         df = pd.DataFrame(report_list)
-        total_monthly = df["Monthly Est."].sum()
+        total_period_sum = df["Period Cost"].sum()
         
-        # --- Clean Sidebar Cost Breakdown ---
+        # --- Sidebar Breakdown ---
         st.sidebar.markdown("---")
         st.sidebar.subheader("Cost Breakdown")
-        
         summary_df = df.groupby("Storage Type").agg(
             Quantity=('Location', 'count'),
-            Total_Cost=('Monthly Est.', 'sum')
+            Total_Cost=('Period Cost', 'sum')
         ).reset_index()
         
-        summary_df = summary_df[['Quantity', 'Storage Type', 'Total_Cost']]
-        
         st.sidebar.dataframe(
-            summary_df, 
-            use_container_width=True, 
-            hide_index=True,
-            column_config={
-                "Total_Cost": st.column_config.NumberColumn("Total Cost", format="$%.2f")
-            }
+            summary_df[['Quantity', 'Storage Type', 'Total_Cost']], 
+            use_container_width=True, hide_index=True,
+            column_config={"Total_Cost": st.column_config.NumberColumn("Total Cost", format="$%.2f")}
         )
 
         # --- Main Dashboard ---
-        col1, col2 = st.columns(2)
-        col1.metric(f"Total Monthly Cost ({selected_tag})", f"${total_monthly:,.2f}")
-        col2.metric("Target Metric", "$0.65/cuft Avg")
+        st.title("📦 Warehouse Storage Report")
+        c1, c2 = st.columns(2)
+        c1.metric(f"Total Cost ({selected_tag})", f"${total_period_sum:,.2f}")
+        c2.metric("Days Counted", f"{num_days} Days")
 
         st.dataframe(
-            df, 
-            use_container_width=True, 
-            hide_index=True,
+            df, use_container_width=True, hide_index=True,
             column_config={
                 "Daily Rate": st.column_config.NumberColumn("Daily Rate", format="$%.4f"),
-                "Monthly Est.": st.column_config.NumberColumn("Monthly Est.", format="$%.2f")
+                "Period Cost": st.column_config.NumberColumn(f"Cost ({num_days} Days)", format="$%.2f")
             }
         )
-        
         st.download_button("Download CSV Report", df.to_csv(index=False), "storage_report.csv", "text/csv")
     else:
         st.info(f"No active inventory for items tagged: {selected_tag}")
