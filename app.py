@@ -10,7 +10,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# CSS for a tight, professional layout
+# Custom CSS for a compact, professional dark-mode branding
 st.markdown("""
     <style>
     .block-container {
@@ -31,7 +31,7 @@ st.markdown("""
         margin-top: -15px !important;
         text-align: center;
     }
-    /* Hide Streamlit Menu and Footer for a standalone look */
+    /* Clean up standalone app look */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     </style>
@@ -104,23 +104,24 @@ def fetch_shiphero_data():
     except:
         return None
 
-# --- 4. UI & FILTERS ---
+# --- 4. UI FILTERS ---
 st.sidebar.header("Report Filters")
 
-# Date Range Picker
+# UPDATED: Date Range Picker with Month/Day/Year display format
 today = date.today()
 date_range = st.sidebar.date_input(
-    "Select Date Range",
-    value=(today.replace(day=1), today), # Default to current month start to today
-    max_value=today
+    "Select Date Range (MM/DD/YYYY)",
+    value=(today.replace(day=1), today),
+    max_value=today,
+    format="MM/DD/YYYY" 
 )
 
-# Calculate days in range
-if len(date_range) == 2:
+# Calculate days for cost calculation
+if isinstance(date_range, tuple) and len(date_range) == 2:
     start_date, end_date = date_range
     num_days = (end_date - start_date).days + 1
 else:
-    num_days = 1 # Fallback if only one date is picked
+    num_days = 1
 
 data_response = fetch_shiphero_data()
 
@@ -143,7 +144,7 @@ if data_response and 'data' in data_response:
                     l_type = location_map.get(l_name, "Unknown")
                     daily_fee = STORAGE_TYPES.get(l_type, 0.0)
 
-                    # LOGIC FIX: If Quantity is 0, Total Cost is 0
+                    # LOGIC FIX: 0 Quantity = 0 Cost
                     total_period_cost = (daily_fee * num_days) if inv_qty > 0 else 0.0
 
                     report_list.append({
@@ -159,7 +160,7 @@ if data_response and 'data' in data_response:
         df = pd.DataFrame(report_list)
         total_period_sum = df["Period Cost"].sum()
         
-        # --- Sidebar Breakdown ---
+        # --- Sidebar Cost Breakdown ---
         st.sidebar.markdown("---")
         st.sidebar.subheader("Cost Breakdown")
         summary_df = df.groupby("Storage Type").agg(
