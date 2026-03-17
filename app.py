@@ -126,16 +126,21 @@ data_response = fetch_shiphero_data()
 if data_response and 'data' in data_response:
     product_edges = data_response.get('data', {}).get('products', {}).get('data', {}).get('edges', [])
     
-    # Get unique tags and setup multi-select
+    # --- MULTI-SELECT TAGS ---
     available_tags = sorted(list({t for e in product_edges for t in e['node'].get('tags', []) if t}))
-    selected_tags = st.sidebar.multiselect("Select Product Tags", available_tags, help="Leave empty to show all items")
+    selected_tags = st.sidebar.multiselect(
+        "Select Product Tags", 
+        options=available_tags, 
+        default=[],
+        help="If empty, all items will be shown."
+    )
 
     report_list = []
     for edge in product_edges:
         node = edge.get('node', {})
         node_tags = node.get('tags', [])
         
-        # Filter Logic: Match if no tags selected OR if item contains any of selected tags
+        # Match if no tags are selected (Show All) OR if product has one of the selected tags
         if not selected_tags or any(tag in node_tags for tag in selected_tags):
             for wh_prod in node.get('warehouse_products', []):
                 for loc_edge in wh_prod.get('locations', {}).get('edges', []):
@@ -158,10 +163,11 @@ if data_response and 'data' in data_response:
                         "Period Cost": round(total_period_cost, 2)
                     }
                     
-                    # Add Tag column ONLY if multiple tags are selected
+                    # Add 'Matching Tags' column ONLY if 2 or more tags are selected
                     if len(selected_tags) > 1:
-                        matching_tags = [t for t in node_tags if t in selected_tags]
-                        row["Matching Tags"] = ", ".join(matching_tags)
+                        # Only show the tags that caused the match
+                        tags_present = [t for t in node_tags if t in selected_tags]
+                        row["Matching Tags"] = ", ".join(tags_present)
                     
                     report_list.append(row)
 
@@ -198,6 +204,6 @@ if data_response and 'data' in data_response:
         )
         st.download_button("Download CSV Report", df.to_csv(index=False), "storage_report.csv", "text/csv")
     else:
-        st.info("No active inventory found for the selected tags.")
+        st.info("No active inventory found for the selected criteria.")
 else:
     st.error("API Connection Error. Verify your SHIPHERO_TOKEN.")
