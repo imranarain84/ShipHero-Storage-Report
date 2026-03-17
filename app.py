@@ -10,7 +10,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS for a compact, professional dark-mode branding
+# Professional CSS for a compact, centered layout
 st.markdown("""
     <style>
     .block-container {
@@ -31,7 +31,6 @@ st.markdown("""
         margin-top: -15px !important;
         text-align: center;
     }
-    /* Clean up standalone app look */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     </style>
@@ -107,16 +106,15 @@ def fetch_shiphero_data():
 # --- 4. UI FILTERS ---
 st.sidebar.header("Report Filters")
 
-# UPDATED: Date Range Picker with Month/Day/Year display format
+# Date Picker (MM/DD/YYYY)
 today = date.today()
 date_range = st.sidebar.date_input(
     "Select Date Range (MM/DD/YYYY)",
     value=(today.replace(day=1), today),
     max_value=today,
-    format="MM/DD/YYYY" 
+    format="MM/DD/YYYY"
 )
 
-# Calculate days for cost calculation
 if isinstance(date_range, tuple) and len(date_range) == 2:
     start_date, end_date = date_range
     num_days = (end_date - start_date).days + 1
@@ -128,13 +126,17 @@ data_response = fetch_shiphero_data()
 if data_response and 'data' in data_response:
     product_edges = data_response.get('data', {}).get('products', {}).get('data', {}).get('edges', [])
     
+    # Get unique tags and setup multi-select
     available_tags = sorted(list({t for e in product_edges for t in e['node'].get('tags', []) if t}))
-    selected_tag = st.sidebar.selectbox("Select Product Tag", ["Show All"] + available_tags)
+    selected_tags = st.sidebar.multiselect("Select Product Tags", available_tags, help="Leave empty to show all items")
 
     report_list = []
     for edge in product_edges:
         node = edge.get('node', {})
-        if selected_tag == "Show All" or selected_tag in node.get('tags', []):
+        node_tags = node.get('tags', [])
+        
+        # Filter Logic: Match if no tags selected OR if item contains any of selected tags
+        if not selected_tags or any(tag in node_tags for tag in selected_tags):
             for wh_prod in node.get('warehouse_products', []):
                 for loc_edge in wh_prod.get('locations', {}).get('edges', []):
                     l_node = loc_edge.get('node', {})
@@ -144,23 +146,30 @@ if data_response and 'data' in data_response:
                     l_type = location_map.get(l_name, "Unknown")
                     daily_fee = STORAGE_TYPES.get(l_type, 0.0)
 
-                    # LOGIC FIX: 0 Quantity = 0 Cost
+                    # 0 Qty = 0 Cost logic
                     total_period_cost = (daily_fee * num_days) if inv_qty > 0 else 0.0
 
-                    report_list.append({
+                    row = {
                         "SKU": node.get('sku'),
                         "Location": l_name,
                         "Storage Type": l_type,
                         "Inv Qty": inv_qty,
                         "Daily Rate": daily_fee,
                         "Period Cost": round(total_period_cost, 2)
-                    })
+                    }
+                    
+                    # Add Tag column ONLY if multiple tags are selected
+                    if len(selected_tags) > 1:
+                        matching_tags = [t for t in node_tags if t in selected_tags]
+                        row["Matching Tags"] = ", ".join(matching_tags)
+                    
+                    report_list.append(row)
 
     if report_list:
         df = pd.DataFrame(report_list)
         total_period_sum = df["Period Cost"].sum()
         
-        # --- Sidebar Cost Breakdown ---
+        # Sidebar Cost Breakdown
         st.sidebar.markdown("---")
         st.sidebar.subheader("Cost Breakdown")
         summary_df = df.groupby("Storage Type").agg(
@@ -174,10 +183,10 @@ if data_response and 'data' in data_response:
             column_config={"Total_Cost": st.column_config.NumberColumn("Total Cost", format="$%.2f")}
         )
 
-        # --- Main Dashboard ---
+        # Main Dashboard
         st.title("📦 Warehouse Storage Report")
         c1, c2 = st.columns(2)
-        c1.metric(f"Total Cost ({selected_tag})", f"${total_period_sum:,.2f}")
+        c1.metric("Total Period Cost", f"${total_period_sum:,.2f}")
         c2.metric("Days Counted", f"{num_days} Days")
 
         st.dataframe(
@@ -189,6 +198,6 @@ if data_response and 'data' in data_response:
         )
         st.download_button("Download CSV Report", df.to_csv(index=False), "storage_report.csv", "text/csv")
     else:
-        st.info(f"No active inventory for items tagged: {selected_tag}")
+        st.info("No active inventory found for the selected tags.")
 else:
     st.error("API Connection Error. Verify your SHIPHERO_TOKEN.")
