@@ -10,12 +10,12 @@ st.set_page_config(
     layout="wide"
 )
 
-# Professional CSS for a compact, centered layout
+# Professional CSS for compact layout and custom footer
 st.markdown("""
     <style>
     .block-container {
         padding-top: 1rem;
-        padding-bottom: 0rem;
+        padding-bottom: 3rem; /* Space for footer */
     }
     [data-testid="stHeader"] {
         background-color: #0e1117;
@@ -30,6 +30,20 @@ st.markdown("""
     h1 {
         margin-top: -15px !important;
         text-align: center;
+    }
+    /* Custom Footer Styling */
+    .footer {
+        position: fixed;
+        left: 0;
+        bottom: 0;
+        width: 100%;
+        background-color: #0e1117;
+        color: #555;
+        text-align: center;
+        padding: 10px;
+        font-size: 12px;
+        border-top: 1px solid #333;
+        z-index: 999;
     }
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
@@ -140,7 +154,6 @@ if data_response and 'data' in data_response:
         node = edge.get('node', {})
         node_tags = node.get('tags', [])
         
-        # Match if no tags are selected (Show All) OR if product has one of the selected tags
         if not selected_tags or any(tag in node_tags for tag in selected_tags):
             for wh_prod in node.get('warehouse_products', []):
                 for loc_edge in wh_prod.get('locations', {}).get('edges', []):
@@ -151,7 +164,6 @@ if data_response and 'data' in data_response:
                     l_type = location_map.get(l_name, "Unknown")
                     daily_fee = STORAGE_TYPES.get(l_type, 0.0)
 
-                    # 0 Qty = 0 Cost logic
                     total_period_cost = (daily_fee * num_days) if inv_qty > 0 else 0.0
 
                     row = {
@@ -163,9 +175,7 @@ if data_response and 'data' in data_response:
                         "Period Cost": round(total_period_cost, 2)
                     }
                     
-                    # Add 'Matching Tags' column ONLY if 2 or more tags are selected
                     if len(selected_tags) > 1:
-                        # Only show the tags that caused the match
                         tags_present = [t for t in node_tags if t in selected_tags]
                         row["Matching Tags"] = ", ".join(tags_present)
                     
@@ -190,7 +200,7 @@ if data_response and 'data' in data_response:
         )
 
         # Main Dashboard
-        st.title("📦 Warehouse Storage Report")
+        st.title("📦 Warehouse Storage Cost Report")
         c1, c2 = st.columns(2)
         c1.metric("Total Period Cost", f"${total_period_sum:,.2f}")
         c2.metric("Days Counted", f"{num_days} Days")
@@ -207,3 +217,10 @@ if data_response and 'data' in data_response:
         st.info("No active inventory found for the selected criteria.")
 else:
     st.error("API Connection Error. Verify your SHIPHERO_TOKEN.")
+
+# --- 5. FOOTER WITH REVISION ---
+st.markdown(f"""
+    <div class="footer">
+        Vertical Passage Warehouse Operations | Revision: March 17, 2026
+    </div>
+    """, unsafe_allow_html=True)
