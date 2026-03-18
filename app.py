@@ -15,7 +15,7 @@ st.markdown("""
     <style>
     .block-container {
         padding-top: 1rem;
-        padding-bottom: 3rem; /* Space for footer */
+        padding-bottom: 3rem; 
     }
     [data-testid="stHeader"] {
         background-color: #0e1117;
@@ -154,6 +154,7 @@ if data_response and 'data' in data_response:
         node = edge.get('node', {})
         node_tags = node.get('tags', [])
         
+        # Filter logic for Multi-select
         if not selected_tags or any(tag in node_tags for tag in selected_tags):
             for wh_prod in node.get('warehouse_products', []):
                 for loc_edge in wh_prod.get('locations', {}).get('edges', []):
@@ -164,9 +165,11 @@ if data_response and 'data' in data_response:
                     l_type = location_map.get(l_name, "Unknown")
                     daily_fee = STORAGE_TYPES.get(l_type, 0.0)
 
+                    # 0 Quantity = 0 Cost logic
                     total_period_cost = (daily_fee * num_days) if inv_qty > 0 else 0.0
 
                     row = {
+                        "Product Name": node.get('name', 'Unknown'),
                         "SKU": node.get('sku'),
                         "Location": l_name,
                         "Storage Type": l_type,
@@ -175,6 +178,7 @@ if data_response and 'data' in data_response:
                         "Period Cost": round(total_period_cost, 2)
                     }
                     
+                    # Add Matching Tags column ONLY if multiple tags are selected
                     if len(selected_tags) > 1:
                         tags_present = [t for t in node_tags if t in selected_tags]
                         row["Matching Tags"] = ", ".join(tags_present)
@@ -185,7 +189,7 @@ if data_response and 'data' in data_response:
         df = pd.DataFrame(report_list)
         total_period_sum = df["Period Cost"].sum()
         
-        # Sidebar Cost Breakdown
+        # Sidebar Cost Breakdown Table
         st.sidebar.markdown("---")
         st.sidebar.subheader("Cost Breakdown")
         summary_df = df.groupby("Storage Type").agg(
@@ -199,12 +203,13 @@ if data_response and 'data' in data_response:
             column_config={"Total_Cost": st.column_config.NumberColumn("Total Cost", format="$%.2f")}
         )
 
-        # Main Dashboard
+        # Main Dashboard UI
         st.title("📦 Warehouse Storage Cost Report")
         c1, c2 = st.columns(2)
         c1.metric("Total Period Cost", f"${total_period_sum:,.2f}")
         c2.metric("Days Counted", f"{num_days} Days")
 
+        # Main Table Display
         st.dataframe(
             df, use_container_width=True, hide_index=True,
             column_config={
