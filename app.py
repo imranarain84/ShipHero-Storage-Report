@@ -71,9 +71,10 @@ def get_loc_map():
         return dict(zip(df['Location'], df['Type']))
     except: return {}
 
-# --- 5. UPDATED FETCH ENGINE (Iteration 4.8) ---
-def fetch_and_filter_inventory(sku_list, selected_tags):
+# --- 5. UPDATED FETCH ENGINE (Iteration 4.9) ---
+def fetch_and_verify_inventory(sku_list, selected_tags):
     verified_results = []
+    debug_log = []
     search_tags = [t.lower().strip() for t in selected_tags]
     
     for i in range(0, len(sku_list), 40):
@@ -84,22 +85,27 @@ def fetch_and_filter_inventory(sku_list, selected_tags):
         try:
             r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS, timeout=30)
             res = r.json()
+            
+            # Credit retry logic
             if 'errors' in res and "credits" in res['errors'][0].get('message', '').lower():
                 time.sleep(8); r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS); res = r.json()
             
             edges = res.get('data', {}).get('products', {}).get('data', {}).get('edges', [])
             
             for edge in edges:
-                # Get the actual tags from ShipHero for this product
-                live_tags = [t.lower().strip() for t in edge['node'].get('tags', [])]
+                node = edge['node']
+                live_tags = [t.lower().strip() for t in node.get('tags', [])]
                 
-                # Check if the product's tags CONTAINS any of the selected tags
+                # Debugging log: What does ShipHero see?
+                debug_log.append({"SKU": node.get('sku'), "ShipHero Tags": node.get('tags')})
+                
+                # Verification logic: Contains check
                 if any(tag in live_tags for tag in search_tags):
                     verified_results.append(edge)
             
             time.sleep(0.4)
         except: continue
-    return verified_results
+    return verified_results, debug_log
 
 # --- 6. UI SIDEBAR ---
 available_tags, tag_map = load_csv_data()
@@ -110,8 +116,7 @@ if available_tags is None:
 
 selected_tags = st.sidebar.multiselect(
     "Select Product Tag (Select all that apply)", 
-    options=available_tags,
-    help="The report will include any SKU from your CSV that contains these tags in ShipHero."
+    options=available_tags
 )
 
 today = date.today()
@@ -127,13 +132,12 @@ else:
     if generate_btn:
         num_days = (date_range[1] - date_range[0]).days + 1 if isinstance(date_range, tuple) and len(date_range) == 2 else 1
         
-        # Get SKUs from CSV that are associated with selected tags
         sku_pool = []
         for tag in selected_tags: sku_pool.extend(tag_map.get(tag, []))
-        sku_pool = list(set(sku_pool))
+        sku_pool = list(set(sku_pool)) # Unique set
         
-        with st.spinner(f"Scanning {len(sku_pool)} SKUs for matching tags..."):
-            raw_edges = fetch_and_filter_inventory(sku_pool, selected_tags)
+        with st.spinner(f"Validating {len(sku_pool)} SKUs with ShipHero..."):
+            raw_edges, debug_data = fetch_and_verify_inventory(sku_pool, selected_tags)
             
         loc_type_map = get_loc_map()
         report_list = []
@@ -161,18 +165,20 @@ else:
             
             st.sidebar.subheader("Cost Breakdown")
             summary = df.groupby("Storage Type").agg(Qty=('Location', 'count'), Cost=('Period Cost', 'sum')).reset_index()
-            st.sidebar.dataframe(summary, hide_index=True, column_config={"Cost": st.column_config.NumberColumn(format="$%.2f")})
+            st.sidebar.dataframe(summary, hide_index=True)
 
             st.dataframe(df, use_container_width=True, hide_index=True)
             st.download_button("Download CSV Report", df.to_csv(index=False), "report.csv")
         else:
-            st.error("No inventory found. Ensure the SKUs in your CSV are correctly tagged in ShipHero.")
-            if len(sku_pool) > 0:
-                st.sidebar.info(f"Analyzed {len(sku_pool)} SKUs from CSV, but none contained the tag(s): {', '.join(selected_tags)}")
+            st.error("❌ No inventory found matching your criteria.")
+            st.markdown("### Debugging Info")
+            st.write("The app found your SKUs in the CSV, but ShipHero says they don't have the selected tags. Compare your selected tags to the live tags below:")
+            if debug_data:
+                st.table(pd.DataFrame(debug_data).head(20))
 
 # --- 8. FOOTER ---
 st.markdown(f"""
     <div class="vp-footer">
-        v4.8 | Vertical Passage Operations
+        v4.9 | Vertical Passage Operations
     </div>
     """, unsafe_allow_html=True)
