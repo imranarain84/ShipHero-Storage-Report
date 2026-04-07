@@ -38,7 +38,7 @@ SHIPHERO_API_URL = "https://public-api.shiphero.com/graphql"
 HEADERS = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 CSV_FILE = "updated_tags.csv" 
 
-# WAREHOUSE IDS FROM POSTMAN
+# WAREHOUSE IDS
 W_PRIMARY = "V2FyZWhvdXNlOjczNjY2"
 W_NORTH = "V2FyZWhvdXNlOjExNjI4OA=="
 
@@ -77,17 +77,18 @@ def get_loc_map():
         return dict(zip(df['Location'].str.strip(), df['Type'].str.strip()))
     except: return {}
 
-# --- 5. DUAL-WAREHOUSE FETCH ENGINE (Iteration 5.7) ---
-def fetch_inventory_dual_warehouse(sku_list, selected_tags):
+# --- 5. NUCLEAR FETCH ENGINE (Iteration 5.8) ---
+def fetch_inventory_nuclear(sku_list, selected_tags):
     final_results = []
+    raw_debug_json = None
     normalized_selections = [str(t).lower().strip() for t in selected_tags]
     
-    for i in range(0, len(sku_list), 15): # Smaller batches for deep warehouse queries
-        batch = sku_list[i:i+15]
+    for i in range(0, len(sku_list), 10): # Very small batches for deep inspect
+        batch = sku_list[i:i+10]
         clean_batch = [str(s).strip() for s in batch if s]
         formatted_skus = json.dumps(clean_batch)
         
-        # Explicitly asking for BOTH warehouses in the query
+        # Super-inclusive query: We ask for EVERYTHING
         query = f"""
         query {{
           products(skus: {formatted_skus}) {{
@@ -97,7 +98,8 @@ def fetch_inventory_dual_warehouse(sku_list, selected_tags):
                   sku name tags
                   warehouse_products {{
                     warehouse_id
-                    locations(first: 100) {{
+                    on_hand
+                    locations(first: 50) {{
                       edges {{ node {{ quantity location {{ name }} }} }}
                     }}
                   }}
@@ -110,6 +112,11 @@ def fetch_inventory_dual_warehouse(sku_list, selected_tags):
         try:
             r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS, timeout=45)
             res = r.json()
+            
+            # Capture the very first response for the debugger
+            if raw_debug_json is None:
+                raw_debug_json = res
+            
             if 'errors' in res and "credits" in res['errors'][0].get('message', '').lower():
                 time.sleep(12); r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS); res = r.json()
             
@@ -117,11 +124,13 @@ def fetch_inventory_dual_warehouse(sku_list, selected_tags):
             for edge in edges:
                 node = edge['node']
                 ship_tags = [str(t).lower().strip() for t in node.get('tags', [])]
+                # Match logic: any tag contains selected tag
                 if any(sel in ship_tags for sel in normalized_selections):
                     final_results.append(edge)
             time.sleep(0.5)
         except: continue
-    return final_results
+        
+    return final_results, raw_debug_json
 
 # --- 6. UI SIDEBAR ---
 available_tags, tag_map = load_csv_data()
@@ -144,15 +153,15 @@ else:
         for tag in selected_tags: sku_pool.extend(tag_map.get(tag, []))
         sku_pool = list(set(sku_pool))
         
-        with st.spinner(f"Searching Primary & VP North for {len(sku_pool)} SKUs..."):
-            raw_edges = fetch_inventory_dual_warehouse(sku_pool, selected_tags)
+        with st.spinner(f"Verifying {len(sku_pool)} SKUs..."):
+            raw_edges, debug_json = fetch_inventory_nuclear(sku_pool, selected_tags)
             
         loc_type_map = get_loc_map()
         report_list = []
         for edge in raw_edges:
             node = edge['node']
             for wh_prod in node.get('warehouse_products', []):
-                # Filter for our two specific warehouses just in case others exist
+                # Check both warehouses
                 if wh_prod['warehouse_id'] in [W_PRIMARY, W_NORTH]:
                     for loc_edge in wh_prod.get('locations', {}).get('edges', []):
                         l_node = loc_edge['node']
@@ -169,20 +178,20 @@ else:
 
         if report_list:
             df = pd.DataFrame(report_list)
-            st.success(f"Report generated successfully!")
+            st.success(f"Report Generated!")
             c1, c2 = st.columns(2)
             c1.metric("Total Period Cost", f"${df['Period Cost'].sum():,.2f}")
             c2.metric("Days Counted", f"{num_days} Days")
-            
             st.sidebar.subheader("Cost Breakdown")
             summary = df.groupby("Storage Type").agg(Qty=('Location', 'count'), Cost=('Period Cost', 'sum')).reset_index()
             st.sidebar.dataframe(summary, hide_index=True)
-            
             st.dataframe(df, use_container_width=True, hide_index=True)
             st.download_button("Download CSV", df.to_csv(index=False), "report.csv")
         else:
-            st.error("❌ Still no inventory records found.")
-            st.write("Despite checking Primary and VP North, no location data was returned for these SKUs. Ensure inventory is currently slotted in these warehouses.")
+            st.error("❌ No inventory found. Please check the debugger below.")
+            with st.expander("🛠️ API RAW DEBUGGER (Open this if no results found)"):
+                st.write("This is exactly what ShipHero sent back for your SKUs:")
+                st.json(debug_json)
 
 # --- 8. FOOTER ---
-st.markdown(f'<div class="vp-footer">v5.7 | Vertical Passage Operations</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="vp-footer">v5.8 | Vertical Passage Operations</div>', unsafe_allow_html=True)
