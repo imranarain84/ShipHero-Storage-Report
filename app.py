@@ -12,15 +12,13 @@ st.set_page_config(page_title="VP Storage Report", page_icon="VP Warehouse Icon 
 st.markdown("""
     <style>
     .block-container { 
-        padding-top: 2rem; /* Adjusted for centered header */
+        padding-top: 2rem; 
         padding-bottom: 10rem; 
     }
     [data-testid="stHeader"] { 
         background-color: #0e1117; 
         height: 0px; 
     }
-    
-    /* Main Centered Header Styling */
     .report-header { 
         text-align: center; 
         margin-top: -20px !important;
@@ -29,8 +27,6 @@ st.markdown("""
         font-size: 42px; 
         font-weight: bold; 
     }
-    
-    /* Centering Generate Button */
     div.stButton > button { 
         display: block; 
         margin: 0 auto; 
@@ -39,8 +35,6 @@ st.markdown("""
         color: white; 
         border: 1px solid #30363d; 
     }
-
-    /* FIXED FOOTER */
     .vp-footer {
         position: fixed;
         left: 0;
@@ -54,19 +48,14 @@ st.markdown("""
         border-top: 1px solid #30363d;
         z-index: 999999;
     }
-    
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    
-    /* Sidebar Logo Adjustment */
     [data-testid="stSidebar"] div.logo-container {
         display: flex;
         justify-content: center;
         padding-top: 10px;
         padding-bottom: 20px;
     }
-    
-    /* Main Page Logo Adjustment */
     div.main-logo-container {
         position: fixed;
         top: 2rem;
@@ -76,34 +65,15 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. LOGO LAYOUT (Iteration 6.1 Split Design) ---
-
-# A. Vertical Passage Logo (Sidebar - Top Left)
-with st.sidebar:
-    st.markdown('<div class="logo-container">', unsafe_allow_html=True)
-    st.image("VP Logo Horizontal Transparent White Lettering.png", width=250)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-# B. Centered Main Header
-st.markdown("<h1 class='report-header'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
-
-# C. Snow Commerce Logo (Main Page - Top Right, Resized to Match VP Impact)
-st.markdown('<div class="main-logo-container">', unsafe_allow_html=True)
-# Adjusting width from 240 to 250 to perfectly mirror the VP logo impact
-st.image("snow-logo.png", width=250) 
-st.markdown('</div>', unsafe_allow_html=True)
-
-# --- 3. API & FILE CONFIGURATION ---
+# --- 2. API & FILE CONFIGURATION ---
 token = st.secrets.get("SHIPHERO_TOKEN_SNOW")
 SHIPHERO_API_URL = "https://public-api.shiphero.com/graphql"
 HEADERS = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 CSV_FILE = "updated_tags.csv" 
 
-# WAREHOUSE IDS
 W_PRIMARY = "V2FyZWhvdXNlOjczNjY2"
 W_NORTH = "V2FyZWhvdXNlOjExNjI4OA=="
 
-# --- 4. STORAGE RATE CARD ---
 STORAGE_TYPES = {
     "Standard Bin": 0.0442, "Bin": 0.0442, "Blue Bin Small": 0.0488, 
     "Blue Bin Medium": 0.1462, "Blue Bin Large": 0.2925, "Gray Bin Small": 0.1846,
@@ -117,7 +87,7 @@ STORAGE_TYPES = {
     "HD": 2.275, "DT - Pallet": 2.2074
 }
 
-# --- 5. DATA UTILITIES ---
+# --- 3. DATA UTILITIES (Defined First) ---
 @st.cache_data
 def load_csv_data():
     if not os.path.exists(CSV_FILE): return None, None
@@ -138,12 +108,9 @@ def get_loc_map():
         return dict(zip(df['Location'].str.strip(), df['Type'].str.strip()))
     except: return {}
 
-# --- 6. ENHANCED FETCH ENGINE (Percentage Bar) ---
 def fetch_inventory_with_percentage(sku_list, selected_tags):
     final_results = []
     normalized_selections = [str(t).lower().strip() for t in selected_tags]
-    
-    # Progress Indicators
     progress_text = st.empty()
     progress_bar = st.progress(0)
     total_skus = len(sku_list)
@@ -153,27 +120,12 @@ def fetch_inventory_with_percentage(sku_list, selected_tags):
         progress_text.markdown(f"**Loading... {current_percent}%**")
         progress_bar.progress((idx + 1) / total_skus)
         
-        query = f"""
-        query {{
-          product(sku: "{sku.strip()}") {{
-            data {{
-              sku name tags
-              warehouse_products {{
-                warehouse_id
-                locations(first: 50) {{
-                  edges {{ node {{ quantity location {{ name }} }} }}
-                }}
-              }}
-            }}
-          }}
-        }}
-        """
+        query = f'query {{ product(sku: "{sku.strip()}") {{ data {{ sku name tags warehouse_products {{ warehouse_id locations(first: 50) {{ edges {{ node {{ quantity location {{ name }} }} }} }} }} }} }} }}'
         try:
             r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS, timeout=15)
             res = r.json()
             if 'errors' in res and "credits" in res['errors'][0].get('message', '').lower():
                 time.sleep(10); r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS); res = r.json()
-            
             product_data = res.get('data', {}).get('product', {}).get('data')
             if product_data:
                 ship_tags = [str(t).lower().strip() for t in product_data.get('tags', [])]
@@ -181,20 +133,37 @@ def fetch_inventory_with_percentage(sku_list, selected_tags):
                     final_results.append(product_data)
             time.sleep(0.25)
         except: continue
-        
-    progress_text.empty()
-    progress_bar.empty()
+    progress_text.empty(); progress_bar.empty()
     return final_results
 
-# --- 7. UI SIDEBAR (Controls Only) ---
+# --- 4. INITIALIZE DATA (The fix for the NameError) ---
+available_tags, tag_map = load_csv_data()
+
+# --- 5. UI LAYOUT ---
+
+# A. Sidebar Logo
 with st.sidebar:
-    st.markdown("---") # Visual separator below the VP Logo
-    selected_tags = st.multiselect("Select Product Tag (Select all that apply)", options=available_tags)
+    st.markdown('<div class="logo-container">', unsafe_allow_html=True)
+    st.image("VP Logo Horizontal Transparent White Lettering.png", width=250)
+    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("---")
+    
+    if available_tags is not None:
+        selected_tags = st.multiselect("Select Product Tag (Select all that apply)", options=available_tags)
+    else:
+        st.error(f"⚠️ {CSV_FILE} not found!")
+        st.stop()
+        
     date_range = st.date_input("Select Date Range", value=(date.today().replace(day=1), date.today()), format="MM/DD/YYYY")
     st.markdown("<br>", unsafe_allow_html=True)
     generate_btn = st.button("Generate Report")
 
-# --- 8. MAIN CONTENT ---
+# B. Main Page Content
+st.markdown("<h1 class='report-header'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
+st.markdown('<div class="main-logo-container">', unsafe_allow_html=True)
+st.image("snow-logo.png", width=250) 
+st.markdown('</div>', unsafe_allow_html=True)
+
 if not selected_tags:
     st.info("👈 Please use the sidebar to select a product tag and date range to begin.")
 else:
@@ -205,9 +174,9 @@ else:
         sku_pool = list(set(sku_pool))
         
         verified_products = fetch_inventory_with_percentage(sku_pool, selected_tags)
-            
         loc_type_map = get_loc_map()
         report_list = []
+        
         for node in verified_products:
             for wh_prod in node.get('warehouse_products', []):
                 if wh_prod['warehouse_id'] in [W_PRIMARY, W_NORTH]:
@@ -218,7 +187,6 @@ else:
                         l_type = loc_type_map.get(l_name, "Unknown")
                         rate = STORAGE_TYPES.get(l_type, 0.0)
                         cost = (rate * num_days) if qty > 0 else 0.0
-                        
                         report_list.append({
                             "Product Name": node.get('name'), "SKU": node.get('sku'), "Location": l_name,
                             "Storage Type": l_type, "Inv Qty": qty, "Daily Rate": rate, "Period Cost": round(cost, 2)
@@ -238,7 +206,7 @@ else:
             st.dataframe(df, use_container_width=True, hide_index=True)
             st.download_button("Download CSV", df.to_csv(index=False), "report.csv")
         else:
-            st.error("❌ No matching inventory found in ShipHero. Verification failed.")
+            st.error("❌ No matching inventory found in ShipHero.")
 
-# --- 9. FOOTER ---
-st.markdown(f'<div class="vp-footer">v6.1 | Vertical Passage Operations</div>', unsafe_allow_html=True)
+# --- 6. FOOTER ---
+st.markdown(f'<div class="vp-footer">v6.2 | Vertical Passage Operations</div>', unsafe_allow_html=True)
