@@ -23,20 +23,14 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# Centered Logo
 st.markdown('<div class="logo-container">', unsafe_allow_html=True)
 st.image("VP Logo Horizontal Transparent White Lettering.png", width=250)
 st.markdown('</div>', unsafe_allow_html=True)
 
 # --- 2. API CONFIGURATION ---
-# Using the specific Snow Commerce token from your secrets
 token = st.secrets.get("SHIPHERO_TOKEN_SNOW")
-
-if not token:
-    st.error("❌ Critical Error: `SHIPHERO_TOKEN_SNOW` not found in Streamlit Secrets.")
-    st.stop()
-
 SHIPHERO_API_URL = "https://public-api.shiphero.com/graphql"
+HEADERS = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 # --- 3. STORAGE RATE CARD ---
 STORAGE_TYPES = {
@@ -52,127 +46,134 @@ STORAGE_TYPES = {
     "HD": 2.275, "DT - Pallet": 2.2074
 }
 
-# --- 4. DATA FETCHING WITH PAGINATION & RETRY ---
-@st.cache_data
-def get_location_lookup():
-    try:
-        df = pd.read_csv("ShipHero - Location Names and Info.csv")
-        return dict(zip(df['Location'], df['Type']))
-    except: return {}
-
-location_map = get_location_lookup()
-
-@st.cache_data(ttl=300)
-def fetch_shiphero_data(api_token):
-    all_products = []
-    has_next_page = True
+# --- 4. LIGHTWEIGHT TAG FETCHING ---
+@st.cache_data(ttl=3600)
+def fetch_all_tags():
+    """Only fetches product tags to keep it fast."""
+    all_tags = set()
     cursor = None
-    headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
-
-    while has_next_page:
+    has_next = True
+    
+    while has_next:
         cursor_arg = f', after: "{cursor}"' if cursor else ""
-        query = f"""
-        query {{
-          products {{
-            data(first: 100{cursor_arg}) {{
-              pageInfo {{ hasNextPage endCursor }}
-              edges {{
-                node {{
-                  sku name tags
-                  warehouse_products {{
-                    locations(first: 25) {{
-                      edges {{ node {{ quantity location {{ name }} }} }}
+        query = f"query {{ products {{ data(first: 250{cursor_arg}) {{ pageInfo {{ hasNextPage endCursor }} edges {{ node {{ tags }} }} }} }} }}"
+        try:
+            r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS, timeout=15)
+            res = r.json()
+            data = res.get('data', {}).get('products', {}).get('data', {})
+            for edge in data.get('edges', []):
+                for tag in edge['node'].get('tags', []):
+                    if tag: all_tags.add(tag)
+            has_next = data.get('pageInfo', {}).get('hasNextPage', False)
+            cursor = data.get('pageInfo', {}).get('endCursor')
+        except:
+            break
+    return sorted(list(all_tags))
+
+# --- 5. TARGETED DATA FETCHING ---
+@st.cache_data(ttl=300)
+def fetch_report_data(selected_tags):
+    """Fetches full inventory details ONLY for selected tags."""
+    report_data = []
+    for tag in selected_tags:
+        cursor = None
+        has_next = True
+        while has_next:
+            cursor_arg = f', after: "{cursor}"' if cursor else ""
+            query = f"""
+            query {{
+              products(tag: "{tag}") {{
+                data(first: 100{cursor_arg}) {{
+                  pageInfo {{ hasNextPage endCursor }}
+                  edges {{
+                    node {{
+                      sku name tags
+                      warehouse_products {{
+                        locations(first: 20) {{
+                          edges {{ node {{ quantity location {{ name }} }} }}
+                        }}
+                      }}
                     }}
                   }}
                 }}
               }}
             }}
-          }}
-        }}
-        """
-        try:
-            r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=headers, timeout=20)
+            """
+            r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS, timeout=20)
             res = r.json()
             
-            # Auto-Retry for Credit Limits
-            if 'errors' in res:
-                error_msg = res['errors'][0].get('message', '')
-                if "not enough credits" in error_msg.lower():
-                    time.sleep(5)
-                    continue 
-                return res
+            # Handle Credit Limit Retry
+            if 'errors' in res and "credits" in res['errors'][0].get('message', ''):
+                time.sleep(5)
+                continue
+                
+            page = res.get('data', {}).get('products', {}).get('data', {})
+            report_data.extend(page.get('edges', []))
+            has_next = page.get('pageInfo', {}).get('hasNextPage', False)
+            cursor = page.get('pageInfo', {}).get('endCursor')
             
-            page_data = res.get('data', {}).get('products', {}).get('data', {})
-            all_products.extend(page_data.get('edges', []))
-            has_next_page = page_data.get('pageInfo', {}).get('hasNextPage', False)
-            cursor = page_data.get('pageInfo', {}).get('endCursor')
-            
-        except Exception as e:
-            return {"debug_error": str(e)}
-            
-    return {"all_edges": all_products}
+    return report_data
 
-# --- 5. UI & PROCESSING ---
-st.sidebar.header("Report Filters")
+# --- 6. UI FLOW ---
+st.sidebar.header("1. Initial Setup")
+with st.spinner("Loading product tags..."):
+    tags_list = fetch_all_tags()
 
+selected_tags = st.sidebar.multiselect("Select Product Tags", options=tags_list)
+
+st.sidebar.markdown("---")
+st.sidebar.header("2. Date Range")
 today = date.today()
-date_range = st.sidebar.date_input("Select Date Range (MM/DD/YYYY)", value=(today.replace(day=1), today), format="MM/DD/YYYY")
+date_range = st.sidebar.date_input("Select Range", value=(today.replace(day=1), today), format="MM/DD/YYYY")
 
+if not selected_tags:
+    st.title("📦 Storage Report")
+    st.info("Please select at least one Product Tag in the sidebar to generate the report.")
+    st.stop()
+
+# Start the heavy lifting only after tags are chosen
 if isinstance(date_range, tuple) and len(date_range) == 2:
     start_date, end_date = date_range
     num_days = (end_date - start_date).days + 1
 else:
     num_days = 1
 
-with st.spinner('Fetching Snow Commerce data... (Waiting for API credits if necessary)'):
-    data_response = fetch_shiphero_data(token)
+with st.spinner(f"Generating report for {len(selected_tags)} tag(s)..."):
+    raw_edges = fetch_report_data(selected_tags)
 
-# Error Handling
-if "debug_error" in data_response:
-    st.error(f"⚠️ Connection Failed: {data_response['debug_error']}")
-    st.stop()
-if 'errors' in data_response:
-    st.error(f"⚠️ ShipHero API Error")
-    st.json(data_response['errors'])
-    st.stop()
+# --- 7. PROCESSING & DISPLAY ---
+@st.cache_data
+def get_location_map():
+    try:
+        df = pd.read_csv("ShipHero - Location Names and Info.csv")
+        return dict(zip(df['Location'], df['Type']))
+    except: return {}
 
-product_edges = data_response.get("all_edges", [])
-if not product_edges:
-    st.warning("No products found for Snow Commerce.")
-    st.stop()
-
-# Build Tag Multi-select
-available_tags = sorted(list({t for e in product_edges for t in e['node'].get('tags', []) if t}))
-selected_tags = st.sidebar.multiselect("Select Product Tags", options=available_tags, help="Leave empty to show all items")
-
+loc_type_map = get_location_map()
 report_list = []
-for edge in product_edges:
-    node = edge.get('node', {})
-    node_tags = node.get('tags', [])
-    if not selected_tags or any(tag in node_tags for tag in selected_tags):
-        for wh_prod in node.get('warehouse_products', []):
-            for loc_edge in wh_prod.get('locations', {}).get('edges', []):
-                l_node = loc_edge.get('node', {})
-                inv_qty = l_node.get('quantity', 0)
-                l_name = l_node.get('location', {}).get('name', 'Unknown')
-                l_type = location_map.get(l_name, "Unknown")
-                daily_fee = STORAGE_TYPES.get(l_type, 0.0)
-                
-                # Logic: 0 Qty = 0 Cost
-                total_period_cost = (daily_fee * num_days) if inv_qty > 0 else 0.0
 
-                row = {
-                    "Product Name": node.get('name', 'Unknown'),
-                    "SKU": node.get('sku'),
-                    "Location": l_name,
-                    "Storage Type": l_type,
-                    "Inv Qty": inv_qty,
-                    "Daily Rate": daily_fee,
-                    "Period Cost": round(total_period_cost, 2)
-                }
-                if len(selected_tags) > 1:
-                    row["Matching Tags"] = ", ".join([t for t in node_tags if t in selected_tags])
-                report_list.append(row)
+for edge in raw_edges:
+    node = edge['node']
+    for wh_prod in node.get('warehouse_products', []):
+        for loc_edge in wh_prod.get('locations', {}).get('edges', []):
+            l_node = loc_edge['node']
+            qty = l_node.get('quantity', 0)
+            l_name = l_node.get('location', {}).get('name', 'Unknown')
+            l_type = loc_type_map.get(l_name, "Unknown")
+            daily_rate = STORAGE_TYPES.get(l_type, 0.0)
+            
+            cost = (daily_rate * num_days) if qty > 0 else 0.0
+            
+            report_list.append({
+                "Product Name": node.get('name'),
+                "SKU": node.get('sku'),
+                "Location": l_name,
+                "Storage Type": l_type,
+                "Inv Qty": qty,
+                "Daily Rate": daily_rate,
+                "Period Cost": round(cost, 2),
+                "Tags": ", ".join(node.get('tags', []))
+            })
 
 if report_list:
     df = pd.DataFrame(report_list)
@@ -182,17 +183,18 @@ if report_list:
     c1.metric("Total Period Cost", f"${df['Period Cost'].sum():,.2f}")
     c2.metric("Days Counted", f"{num_days} Days")
 
-    # Sidebar Cost Breakdown
-    st.sidebar.markdown("---")
+    # Sidebar Summary
     st.sidebar.subheader("Cost Breakdown")
-    summary_df = df.groupby("Storage Type").agg(Quantity=('Location', 'count'), Total_Cost=('Period Cost', 'sum')).reset_index()
-    st.sidebar.dataframe(summary_df[['Quantity', 'Storage Type', 'Total_Cost']], use_container_width=True, hide_index=True, column_config={"Total_Cost": st.column_config.NumberColumn("Total Cost", format="$%.2f")})
+    summary = df.groupby("Storage Type").agg(Qty=('Location', 'count'), Cost=('Period Cost', 'sum')).reset_index()
+    st.sidebar.dataframe(summary, hide_index=True, column_config={"Cost": st.column_config.NumberColumn(format="$%.2f")})
 
-    # Main Data Table
-    st.dataframe(df, use_container_width=True, hide_index=True, column_config={"Daily Rate": st.column_config.NumberColumn(format="$%.4f"), "Period Cost": st.column_config.NumberColumn(format="$%.2f")})
-    st.download_button("Download CSV Report", df.to_csv(index=False), "snow_commerce_storage.csv", "text/csv")
+    # Main Table
+    st.dataframe(df, use_container_width=True, hide_index=True, column_config={
+        "Daily Rate": st.column_config.NumberColumn(format="$%.4f"),
+        "Period Cost": st.column_config.NumberColumn(format="$%.2f")
+    })
+    st.download_button("Download CSV", df.to_csv(index=False), "report.csv", "text/csv")
 else:
-    st.info("No active inventory matches your criteria.")
+    st.warning("No inventory found for the selected tags.")
 
-# --- 6. FOOTER ---
 st.markdown(f'<div class="footer">Vertical Passage Warehouse Operations | Revision: March 17, 2026</div>', unsafe_allow_html=True)
