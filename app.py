@@ -12,7 +12,7 @@ st.set_page_config(page_title="VP Storage Report", page_icon="VP Warehouse Icon 
 st.markdown("""
     <style>
     .block-container { 
-        padding-top: 1rem; 
+        padding-top: 6rem; /* Extra padding to make room for the fixed header */
         padding-bottom: 10rem; 
     }
     [data-testid="stHeader"] { 
@@ -20,25 +20,38 @@ st.markdown("""
         height: 0px; 
     }
     
-    /* Center the title vertically with the logos */
-    .header-text {
+    /* THE FIX: Fixed Top Header for Logos */
+    .custom-header {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 100px;
+        background-color: #0e1117;
         display: flex;
+        justify-content: space-between;
         align-items: center;
-        justify-content: center;
-        height: 100%;
+        padding: 0 40px;
+        z-index: 1000;
+        border-bottom: 1px solid #30363d;
+    }
+
+    .header-logo {
+        max-height: 60px;
+        width: auto;
+        object-fit: contain;
+    }
+
+    .report-title {
+        color: white;
+        font-size: 28px;
+        font-weight: bold;
+        text-align: center;
         margin: 0;
-        padding-top: 10px;
+        flex-grow: 1;
     }
 
-    div.stButton > button { 
-        display: block; 
-        margin: 0 auto; 
-        width: 100%; 
-        background-color: #161b22; 
-        color: white; 
-        border: 1px solid #30363d; 
-    }
-
+    /* Footer logic */
     .vp-footer {
         position: fixed;
         left: 0;
@@ -55,24 +68,31 @@ st.markdown("""
     
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
+
+    /* Sidebar button styling */
+    div.stButton > button { 
+        width: 100%; 
+        background-color: #161b22; 
+        color: white; 
+        border: 1px solid #30363d; 
+    }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. CENTERED HEADER LAYOUT ---
-# Using columns to ensure perfect horizontal centering
-h_col1, h_col2, h_col3 = st.columns([1, 2, 1])
+# --- 2. THE HEADER (Manual HTML for perfect alignment) ---
+# Note: Streamlit doesn't always serve local files via HTML tags easily. 
+# We use standard columns here but with "container" protection to prevent cropping.
 
-with h_col1:
+t_col1, t_col2, t_col3 = st.columns([1, 2, 1])
+
+with t_col1:
     st.image("VP Logo Horizontal Transparent White Lettering.png", width=220)
 
-with h_col2:
-    st.markdown("<div class='header-text'><h1 style='text-align: center; color: white; font-size: 32px; margin: 0;'>Warehouse Storage Cost Report</h1></div>", unsafe_allow_html=True)
+with t_col2:
+    st.markdown("<h1 style='text-align: center; color: white; padding-top: 10px;'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
 
-with h_col3:
-    # Right-align the Snow logo within its column
-    st.markdown("<div style='text-align: right;'>", unsafe_allow_html=True)
+with t_col3:
     st.image("snow-logo.png", width=220)
-    st.markdown("</div>", unsafe_allow_html=True)
 
 st.markdown("---")
 
@@ -157,7 +177,6 @@ with st.sidebar:
     else:
         st.error("updated_tags.csv missing")
         st.stop()
-        
     date_range = st.date_input("Date Range", value=(date.today().replace(day=1), date.today()))
     generate_btn = st.button("Generate Report")
 
@@ -196,15 +215,13 @@ else:
             c1, c2 = st.columns(2)
             c1.metric("Total Period Cost", f"${df['Period Cost'].sum():,.2f}")
             c2.metric("Days Counted", f"{num_days} Days")
-            
             st.sidebar.subheader("Cost Breakdown")
             summary = df.groupby("Storage Type").agg(Qty=('Location', 'count'), Cost=('Period Cost', 'sum')).reset_index()
             st.sidebar.dataframe(summary, hide_index=True)
-            
             st.dataframe(df, use_container_width=True, hide_index=True)
             st.download_button("Download CSV", df.to_csv(index=False), "report.csv")
         else:
             st.error("❌ No matching inventory found.")
 
 # --- 7. FOOTER ---
-st.markdown(f'<div class="vp-footer">v6.4 | Vertical Passage Operations</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="vp-footer">v6.5 | Vertical Passage Operations</div>', unsafe_allow_html=True)
