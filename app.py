@@ -23,19 +23,17 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
+# Centered Logo
 st.markdown('<div class="logo-container">', unsafe_allow_html=True)
 st.image("VP Logo Horizontal Transparent White Lettering.png", width=250)
 st.markdown('</div>', unsafe_allow_html=True)
 
-# --- 2. MULTI-ACCOUNT SELECTION ---
-st.sidebar.header("Account Settings")
-account_choice = st.sidebar.selectbox("Select ShipHero Account", ["Snow Commerce", "Universal Parks"])
-
-token_key = "SHIPHERO_TOKEN_SNOW" if account_choice == "Snow Commerce" else "SHIPHERO_TOKEN_UNIVERSAL"
-token = st.secrets.get(token_key)
+# --- 2. API CONFIGURATION ---
+# Using the specific Snow Commerce token from your secrets
+token = st.secrets.get("SHIPHERO_TOKEN_SNOW")
 
 if not token:
-    st.error(f"❌ Critical Error: `{token_key}` not found in Streamlit Secrets.")
+    st.error("❌ Critical Error: `SHIPHERO_TOKEN_SNOW` not found in Streamlit Secrets.")
     st.stop()
 
 SHIPHERO_API_URL = "https://public-api.shiphero.com/graphql"
@@ -54,7 +52,7 @@ STORAGE_TYPES = {
     "HD": 2.275, "DT - Pallet": 2.2074
 }
 
-# --- 4. DATA FETCHING WITH RETRY LOGIC ---
+# --- 4. DATA FETCHING WITH PAGINATION & RETRY ---
 @st.cache_data
 def get_location_lookup():
     try:
@@ -65,7 +63,7 @@ def get_location_lookup():
 location_map = get_location_lookup()
 
 @st.cache_data(ttl=300)
-def fetch_shiphero_data(api_token, account_name):
+def fetch_shiphero_data(api_token):
     all_products = []
     has_next_page = True
     cursor = None
@@ -96,14 +94,13 @@ def fetch_shiphero_data(api_token, account_name):
             r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=headers, timeout=20)
             res = r.json()
             
-            # --- CREDIT LIMIT RETRY LOGIC ---
+            # Auto-Retry for Credit Limits
             if 'errors' in res:
                 error_msg = res['errors'][0].get('message', '')
                 if "not enough credits" in error_msg.lower():
-                    # Wait 5 seconds for credits to refill and retry this loop iteration
                     time.sleep(5)
                     continue 
-                return res # If it's a different error, return it
+                return res
             
             page_data = res.get('data', {}).get('products', {}).get('data', {})
             all_products.extend(page_data.get('edges', []))
@@ -116,7 +113,6 @@ def fetch_shiphero_data(api_token, account_name):
     return {"all_edges": all_products}
 
 # --- 5. UI & PROCESSING ---
-st.sidebar.markdown("---")
 st.sidebar.header("Report Filters")
 
 today = date.today()
@@ -128,8 +124,8 @@ if isinstance(date_range, tuple) and len(date_range) == 2:
 else:
     num_days = 1
 
-with st.spinner(f'Fetching data for {account_choice}... (This may take a moment if credits need to refill)'):
-    data_response = fetch_shiphero_data(token, account_choice)
+with st.spinner('Fetching Snow Commerce data... (Waiting for API credits if necessary)'):
+    data_response = fetch_shiphero_data(token)
 
 # Error Handling
 if "debug_error" in data_response:
@@ -140,14 +136,14 @@ if 'errors' in data_response:
     st.json(data_response['errors'])
     st.stop()
 
-# Data Processing
 product_edges = data_response.get("all_edges", [])
 if not product_edges:
-    st.warning(f"No products found for {account_choice}.")
+    st.warning("No products found for Snow Commerce.")
     st.stop()
 
+# Build Tag Multi-select
 available_tags = sorted(list({t for e in product_edges for t in e['node'].get('tags', []) if t}))
-selected_tags = st.sidebar.multiselect("Select Product Tags", options=available_tags)
+selected_tags = st.sidebar.multiselect("Select Product Tags", options=available_tags, help="Leave empty to show all items")
 
 report_list = []
 for edge in product_edges:
@@ -158,14 +154,17 @@ for edge in product_edges:
             for loc_edge in wh_prod.get('locations', {}).get('edges', []):
                 l_node = loc_edge.get('node', {})
                 inv_qty = l_node.get('quantity', 0)
-                l_type = location_map.get(l_node.get('location', {}).get('name', ''), "Unknown")
+                l_name = l_node.get('location', {}).get('name', 'Unknown')
+                l_type = location_map.get(l_name, "Unknown")
                 daily_fee = STORAGE_TYPES.get(l_type, 0.0)
+                
+                # Logic: 0 Qty = 0 Cost
                 total_period_cost = (daily_fee * num_days) if inv_qty > 0 else 0.0
 
                 row = {
                     "Product Name": node.get('name', 'Unknown'),
                     "SKU": node.get('sku'),
-                    "Location": l_node.get('location', {}).get('name', 'Unknown'),
+                    "Location": l_name,
                     "Storage Type": l_type,
                     "Inv Qty": inv_qty,
                     "Daily Rate": daily_fee,
@@ -177,17 +176,23 @@ for edge in product_edges:
 
 if report_list:
     df = pd.DataFrame(report_list)
-    st.title(f"📦 Storage Report: {account_choice}")
+    st.title("📦 Snow Commerce Storage Report")
+    
     c1, c2 = st.columns(2)
     c1.metric("Total Period Cost", f"${df['Period Cost'].sum():,.2f}")
     c2.metric("Days Counted", f"{num_days} Days")
 
+    # Sidebar Cost Breakdown
     st.sidebar.markdown("---")
     st.sidebar.subheader("Cost Breakdown")
     summary_df = df.groupby("Storage Type").agg(Quantity=('Location', 'count'), Total_Cost=('Period Cost', 'sum')).reset_index()
     st.sidebar.dataframe(summary_df[['Quantity', 'Storage Type', 'Total_Cost']], use_container_width=True, hide_index=True, column_config={"Total_Cost": st.column_config.NumberColumn("Total Cost", format="$%.2f")})
 
+    # Main Data Table
     st.dataframe(df, use_container_width=True, hide_index=True, column_config={"Daily Rate": st.column_config.NumberColumn(format="$%.4f"), "Period Cost": st.column_config.NumberColumn(format="$%.2f")})
-    st.download_button(f"Download CSV", df.to_csv(index=False), f"{account_choice}_report.csv", "text/csv")
+    st.download_button("Download CSV Report", df.to_csv(index=False), "snow_commerce_storage.csv", "text/csv")
+else:
+    st.info("No active inventory matches your criteria.")
 
+# --- 6. FOOTER ---
 st.markdown(f'<div class="footer">Vertical Passage Warehouse Operations | Revision: March 17, 2026</div>', unsafe_allow_html=True)
