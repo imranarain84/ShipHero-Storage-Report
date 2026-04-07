@@ -33,6 +33,7 @@ st.image("snow-logo.png", width=240)
 st.markdown('</div>', unsafe_allow_html=True)
 
 # --- 2. API & FILE CONFIGURATION ---
+# IMPORTANT: Update your Secrets with the Full Access Token under this key name
 token = st.secrets.get("SHIPHERO_TOKEN_SNOW")
 SHIPHERO_API_URL = "https://public-api.shiphero.com/graphql"
 HEADERS = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -59,7 +60,6 @@ def load_csv_data():
     try:
         df = pd.read_csv(CSV_FILE, dtype={'sku': str})
         df.columns = df.columns.str.strip().str.lower()
-        # Clean the SKU and Tag data immediately
         df['sku'] = df['sku'].str.strip()
         df['tag'] = df['tag'].str.strip()
         unique_tags = sorted(df['tag'].dropna().unique().tolist())
@@ -74,14 +74,13 @@ def get_loc_map():
         return dict(zip(df['Location'].str.strip(), df['Type'].str.strip()))
     except: return {}
 
-# --- 5. ROBUST FETCH ENGINE ---
-def fetch_inventory_v5_4(sku_list, selected_tags):
+# --- 5. UPDATED FETCH ENGINE (Zero-Qty Inclusive) ---
+def fetch_inventory_v5_5(sku_list, selected_tags):
     final_results = []
     normalized_selections = [str(t).lower().strip() for t in selected_tags]
     
     for i in range(0, len(sku_list), 25):
         batch = sku_list[i:i+25]
-        # Ensure SKUs are clean strings
         clean_batch = [str(s).strip() for s in batch if s]
         formatted_skus = json.dumps(clean_batch)
         
@@ -104,20 +103,18 @@ def fetch_inventory_v5_4(sku_list, selected_tags):
         }}
         """
         try:
-            r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS, timeout=30)
+            r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS, timeout=35)
             res = r.json()
-            if 'errors' in res:
-                if "credits" in res['errors'][0].get('message', '').lower():
-                    time.sleep(10); r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS); res = r.json()
+            if 'errors' in res and "credits" in res['errors'][0].get('message', '').lower():
+                time.sleep(12); r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS); res = r.json()
             
             edges = res.get('data', {}).get('products', {}).get('data', {}).get('edges', [])
             for edge in edges:
                 node = edge['node']
                 ship_tags = [str(t).lower().strip() for t in node.get('tags', [])]
-                # If any selected tag matches any part of ShipHero tags
                 if any(sel in ship_tags for sel in normalized_selections):
                     final_results.append(edge)
-            time.sleep(0.4)
+            time.sleep(0.5)
         except: continue
     return final_results
 
@@ -126,11 +123,6 @@ available_tags, tag_map = load_csv_data()
 if available_tags is None:
     st.sidebar.warning(f"⚠️ {CSV_FILE} not found!")
     st.stop()
-
-# Verification Status
-with st.sidebar.expander("System Status", expanded=False):
-    if token: st.success("✅ API Token Connected")
-    else: st.error("❌ API Token Missing")
 
 selected_tags = st.sidebar.multiselect("Select Product Tag (Select all that apply)", options=available_tags)
 date_range = st.sidebar.date_input("Select Date Range", value=(date.today().replace(day=1), date.today()), format="MM/DD/YYYY")
@@ -147,21 +139,21 @@ else:
         for tag in selected_tags: sku_pool.extend(tag_map.get(tag, []))
         sku_pool = list(set(sku_pool))
         
-        with st.spinner(f"Scanning {len(sku_pool)} SKUs..."):
-            raw_edges = fetch_inventory_v5_4(sku_pool, selected_tags)
+        with st.spinner(f"Querying ShipHero for {len(sku_pool)} SKUs..."):
+            raw_edges = fetch_inventory_v5_5(sku_pool, selected_tags)
             
         loc_type_map = get_loc_map()
         report_list = []
         for edge in raw_edges:
             node = edge['node']
             for wh_prod in node.get('warehouse_products', []):
-                # Pull ALL locations for the product
                 for loc_edge in wh_prod.get('locations', {}).get('edges', []):
                     l_node = loc_edge['node']
                     qty = l_node.get('quantity', 0)
                     l_name = str(l_node.get('location', {}).get('name', 'Unknown')).strip()
                     l_type = loc_type_map.get(l_name, "Unknown")
                     rate = STORAGE_TYPES.get(l_type, 0.0)
+                    # Calculation remains inclusive of 0 qty
                     cost = (rate * num_days) if qty > 0 else 0.0
                     
                     report_list.append({
@@ -183,10 +175,7 @@ else:
             st.dataframe(df, use_container_width=True, hide_index=True)
             st.download_button("Download CSV", df.to_csv(index=False), "report.csv")
         else:
-            st.error("❌ No inventory found. Verification failed.")
-            st.write("Troubleshooting Steps:")
-            st.write("1. Check if the SKUs in the CSV have any leading/trailing spaces.")
-            st.write("2. Confirm the products have active stock in a designated location in ShipHero.")
+            st.error("❌ No inventory found. Ensure your Full Access token is active and includes appropriate permissions.")
 
 # --- 8. FOOTER ---
-st.markdown(f'<div class="vp-footer">v5.4 | Vertical Passage Operations</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="vp-footer">v5.5 | Vertical Passage Operations</div>', unsafe_allow_html=True)
