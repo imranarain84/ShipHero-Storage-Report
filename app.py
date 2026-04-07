@@ -52,7 +52,7 @@ STORAGE_TYPES = {
     "HD": 2.275, "DT - Pallet": 2.2074
 }
 
-# --- 4. DATA UTILITIES ---
+# --- 4. CSV LOADING ---
 @st.cache_data
 def load_csv_data():
     if not os.path.exists(CSV_FILE): return None, None
@@ -71,41 +71,61 @@ def get_loc_map():
         return dict(zip(df['Location'], df['Type']))
     except: return {}
 
-# --- 5. UPDATED FETCH ENGINE (Iteration 4.9) ---
-def fetch_and_verify_inventory(sku_list, selected_tags):
-    verified_results = []
-    debug_log = []
-    search_tags = [t.lower().strip() for t in selected_tags]
+# --- 5. BRUTE FORCE FETCH ENGINE (Iteration 5.0) ---
+def fetch_inventory_brute_force(sku_list, selected_tags):
+    final_results = []
+    # Normalize selected tags for a broad "contains" check
+    normalized_selections = [str(t).lower().strip() for t in selected_tags]
     
-    for i in range(0, len(sku_list), 40):
-        batch = sku_list[i:i+40]
+    # We process 30 SKUs at a time to stay very safe on credit limits
+    for i in range(0, len(sku_list), 30):
+        batch = sku_list[i:i+30]
         formatted_skus = json.dumps([str(s).strip() for s in batch])
-        query = f"query {{ products(skus: {formatted_skus}) {{ data(first: 50) {{ edges {{ node {{ sku name tags warehouse_products {{ locations(first: 15) {{ edges {{ node {{ quantity location {{ name }} }} }} }} }} }} }} }} }} }}"
         
+        # We ask for EVERY product detail, we will do the filtering in Python
+        query = f"""
+        query {{
+          products(skus: {formatted_skus}) {{
+            data(first: 50) {{
+              edges {{
+                node {{
+                  sku name tags
+                  warehouse_products {{
+                    locations(first: 20) {{
+                      edges {{ node {{ quantity location {{ name }} }} }}
+                    }}
+                  }}
+                }}
+              }}
+            }}
+          }}
+        }}
+        """
         try:
             r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS, timeout=30)
             res = r.json()
             
-            # Credit retry logic
             if 'errors' in res and "credits" in res['errors'][0].get('message', '').lower():
-                time.sleep(8); r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS); res = r.json()
+                time.sleep(10); r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS); res = r.json()
             
             edges = res.get('data', {}).get('products', {}).get('data', {}).get('edges', [])
             
             for edge in edges:
                 node = edge['node']
-                live_tags = [t.lower().strip() for t in node.get('tags', [])]
+                # Get the raw tags from ShipHero
+                raw_tags = node.get('tags', [])
+                if not raw_tags: continue
                 
-                # Debugging log: What does ShipHero see?
-                debug_log.append({"SKU": node.get('sku'), "ShipHero Tags": node.get('tags')})
+                # Check if any part of the selected tags matches any part of ShipHero tags
+                node_tags_clean = [str(t).lower().strip() for t in raw_tags]
                 
-                # Verification logic: Contains check
-                if any(tag in live_tags for tag in search_tags):
-                    verified_results.append(edge)
+                if any(sel in node_tags_clean for sel in normalized_selections):
+                    final_results.append(edge)
             
-            time.sleep(0.4)
+            time.sleep(0.5)
         except: continue
-    return verified_results, debug_log
+        
+    return final_results
 
 # --- 6. UI SIDEBAR ---
 available_tags, tag_map = load_csv_data()
@@ -132,12 +152,13 @@ else:
     if generate_btn:
         num_days = (date_range[1] - date_range[0]).days + 1 if isinstance(date_range, tuple) and len(date_range) == 2 else 1
         
+        # Build the pool of SKUs we are interested in checking
         sku_pool = []
         for tag in selected_tags: sku_pool.extend(tag_map.get(tag, []))
-        sku_pool = list(set(sku_pool)) # Unique set
+        sku_pool = list(set(sku_pool))
         
-        with st.spinner(f"Validating {len(sku_pool)} SKUs with ShipHero..."):
-            raw_edges, debug_data = fetch_and_verify_inventory(sku_pool, selected_tags)
+        with st.spinner(f"Force-Fetching {len(sku_pool)} SKUs from ShipHero..."):
+            raw_edges = fetch_inventory_brute_force(sku_pool, selected_tags)
             
         loc_type_map = get_loc_map()
         report_list = []
@@ -170,15 +191,12 @@ else:
             st.dataframe(df, use_container_width=True, hide_index=True)
             st.download_button("Download CSV Report", df.to_csv(index=False), "report.csv")
         else:
-            st.error("❌ No inventory found matching your criteria.")
-            st.markdown("### Debugging Info")
-            st.write("The app found your SKUs in the CSV, but ShipHero says they don't have the selected tags. Compare your selected tags to the live tags below:")
-            if debug_data:
-                st.table(pd.DataFrame(debug_data).head(20))
+            st.error("❌ Critical Error: ShipHero returned data for these SKUs, but none of them contained the expected tags.")
+            st.write("This usually means the SKUs in your CSV exist in ShipHero, but the 'Tag' column in the CSV does not match the 'Tag' field in ShipHero's Product Settings.")
 
 # --- 8. FOOTER ---
 st.markdown(f"""
     <div class="vp-footer">
-        v4.9 | Vertical Passage Operations
+        v5.0 | Vertical Passage Operations
     </div>
     """, unsafe_allow_html=True)
