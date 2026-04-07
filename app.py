@@ -1,5 +1,5 @@
 import streamlit as st
-import pandas as pd
+import pd
 import requests
 import time
 import json
@@ -12,21 +12,34 @@ st.set_page_config(page_title="VP Storage Report", page_icon="VP Warehouse Icon 
 st.markdown("""
     <style>
     .block-container { 
-        padding-top: 2rem; 
+        padding-top: 1rem; 
         padding-bottom: 10rem; 
     }
     [data-testid="stHeader"] { 
         background-color: #0e1117; 
         height: 0px; 
     }
+    
+    /* Logo and Title Header Container */
+    .brand-container {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 20px;
+        background-color: #0e1117;
+        margin-bottom: 20px;
+        border-bottom: 1px solid #30363d;
+    }
+    
     .report-header { 
         text-align: center; 
-        margin-top: -20px !important;
-        margin-bottom: 20px; 
         color: white; 
-        font-size: 42px; 
-        font-weight: bold; 
+        font-size: 36px; 
+        font-weight: bold;
+        margin: 0;
+        flex-grow: 1;
     }
+
     div.stButton > button { 
         display: block; 
         margin: 0 auto; 
@@ -35,6 +48,7 @@ st.markdown("""
         color: white; 
         border: 1px solid #30363d; 
     }
+
     .vp-footer {
         position: fixed;
         left: 0;
@@ -48,24 +62,33 @@ st.markdown("""
         border-top: 1px solid #30363d;
         z-index: 999999;
     }
+    
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    [data-testid="stSidebar"] div.logo-container {
-        display: flex;
-        justify-content: center;
-        padding-top: 10px;
-        padding-bottom: 20px;
-    }
-    div.main-logo-container {
-        position: fixed;
-        top: 2rem;
-        right: 2rem;
-        z-index: 999;
-    }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. API & FILE CONFIGURATION ---
+# --- 2. HEADER LAYOUT (Centered Logos & Title) ---
+st.markdown(f"""
+    <div class="brand-container">
+        <img src="https://raw.githubusercontent.com/YOUR_REPO/main/VP%20Logo%20Horizontal%20Transparent%20White%20Lettering.png" width="220">
+        <div class="report-header">Warehouse Storage Cost Report</div>
+        <img src="https://raw.githubusercontent.com/YOUR_REPO/main/snow-logo.png" width="220">
+    </div>
+    """, unsafe_allow_html=True)
+
+# Note: If using local files, use st.columns for the header instead of raw HTML:
+col1, col2, col3 = st.columns([1, 2, 1])
+with col1:
+    st.image("VP Logo Horizontal Transparent White Lettering.png", width=220)
+with col2:
+    st.markdown("<h1 style='text-align: center; color: white; font-size: 32px;'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
+with col3:
+    st.image("snow-logo.png", width=220)
+
+st.markdown("---")
+
+# --- 3. API & DATA CONFIGURATION ---
 token = st.secrets.get("SHIPHERO_TOKEN_SNOW")
 SHIPHERO_API_URL = "https://public-api.shiphero.com/graphql"
 HEADERS = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -87,7 +110,6 @@ STORAGE_TYPES = {
     "HD": 2.275, "DT - Pallet": 2.2074
 }
 
-# --- 3. DATA UTILITIES (Defined First) ---
 @st.cache_data
 def load_csv_data():
     if not os.path.exists(CSV_FILE): return None, None
@@ -131,41 +153,29 @@ def fetch_inventory_with_percentage(sku_list, selected_tags):
                 ship_tags = [str(t).lower().strip() for t in product_data.get('tags', [])]
                 if any(sel in ship_tags for sel in normalized_selections):
                     final_results.append(product_data)
-            time.sleep(0.25)
+            time.sleep(0.2)
         except: continue
     progress_text.empty(); progress_bar.empty()
     return final_results
 
-# --- 4. INITIALIZE DATA (The fix for the NameError) ---
+# --- 4. INITIALIZE DATA ---
 available_tags, tag_map = load_csv_data()
 
-# --- 5. UI LAYOUT ---
-
-# A. Sidebar Logo
+# --- 5. SIDEBAR ---
 with st.sidebar:
-    st.markdown('<div class="logo-container">', unsafe_allow_html=True)
-    st.image("VP Logo Horizontal Transparent White Lettering.png", width=250)
-    st.markdown('</div>', unsafe_allow_html=True)
-    st.markdown("---")
-    
+    st.header("Report Filters")
     if available_tags is not None:
-        selected_tags = st.multiselect("Select Product Tag (Select all that apply)", options=available_tags)
+        selected_tags = st.multiselect("Select Product Tag", options=available_tags)
     else:
-        st.error(f"⚠️ {CSV_FILE} not found!")
+        st.error("updated_tags.csv missing")
         st.stop()
         
-    date_range = st.date_input("Select Date Range", value=(date.today().replace(day=1), date.today()), format="MM/DD/YYYY")
-    st.markdown("<br>", unsafe_allow_html=True)
+    date_range = st.date_input("Date Range", value=(date.today().replace(day=1), date.today()))
     generate_btn = st.button("Generate Report")
 
-# B. Main Page Content
-st.markdown("<h1 class='report-header'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
-st.markdown('<div class="main-logo-container">', unsafe_allow_html=True)
-st.image("snow-logo.png", width=250) 
-st.markdown('</div>', unsafe_allow_html=True)
-
+# --- 6. PROCESSING ---
 if not selected_tags:
-    st.info("👈 Please use the sidebar to select a product tag and date range to begin.")
+    st.info("👈 Select a tag in the sidebar to begin.")
 else:
     if generate_btn:
         num_days = (date_range[1] - date_range[0]).days + 1 if isinstance(date_range, tuple) and len(date_range) == 2 else 1
@@ -194,7 +204,7 @@ else:
 
         if report_list:
             df = pd.DataFrame(report_list)
-            st.success(f"Verified {len(df['SKU'].unique())} unique SKUs.")
+            st.success(f"Verified {len(df['SKU'].unique())} SKUs.")
             c1, c2 = st.columns(2)
             c1.metric("Total Period Cost", f"${df['Period Cost'].sum():,.2f}")
             c2.metric("Days Counted", f"{num_days} Days")
@@ -206,7 +216,7 @@ else:
             st.dataframe(df, use_container_width=True, hide_index=True)
             st.download_button("Download CSV", df.to_csv(index=False), "report.csv")
         else:
-            st.error("❌ No matching inventory found in ShipHero.")
+            st.error("❌ No matching inventory found.")
 
-# --- 6. FOOTER ---
-st.markdown(f'<div class="vp-footer">v6.2 | Vertical Passage Operations</div>', unsafe_allow_html=True)
+# --- 7. FOOTER ---
+st.markdown(f'<div class="vp-footer">v6.3 | Vertical Passage Operations</div>', unsafe_allow_html=True)
