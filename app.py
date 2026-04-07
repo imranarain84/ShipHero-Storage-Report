@@ -77,32 +77,28 @@ def get_loc_map():
         return dict(zip(df['Location'].str.strip(), df['Type'].str.strip()))
     except: return {}
 
-# --- 5. NUCLEAR FETCH ENGINE (Iteration 5.8) ---
-def fetch_inventory_nuclear(sku_list, selected_tags):
+# --- 5. INDIVIDUAL FETCH ENGINE (Iteration 5.9) ---
+def fetch_inventory_individual(sku_list, selected_tags):
     final_results = []
-    raw_debug_json = None
     normalized_selections = [str(t).lower().strip() for t in selected_tags]
     
-    for i in range(0, len(sku_list), 10): # Very small batches for deep inspect
-        batch = sku_list[i:i+10]
-        clean_batch = [str(s).strip() for s in batch if s]
-        formatted_skus = json.dumps(clean_batch)
+    progress_bar = st.progress(0)
+    total_skus = len(sku_list)
+    
+    for idx, sku in enumerate(sku_list):
+        # Update progress bar
+        progress_bar.progress((idx + 1) / total_skus)
         
-        # Super-inclusive query: We ask for EVERYTHING
+        # We query ONE SKU at a time using 'sku' (singular)
         query = f"""
         query {{
-          products(skus: {formatted_skus}) {{
-            data(first: 50) {{
-              edges {{
-                node {{
-                  sku name tags
-                  warehouse_products {{
-                    warehouse_id
-                    on_hand
-                    locations(first: 50) {{
-                      edges {{ node {{ quantity location {{ name }} }} }}
-                    }}
-                  }}
+          product(sku: "{sku.strip()}") {{
+            data {{
+              sku name tags
+              warehouse_products {{
+                warehouse_id
+                locations(first: 50) {{
+                  edges {{ node {{ quantity location {{ name }} }} }}
                 }}
               }}
             }}
@@ -110,27 +106,25 @@ def fetch_inventory_nuclear(sku_list, selected_tags):
         }}
         """
         try:
-            r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS, timeout=45)
+            r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS, timeout=15)
             res = r.json()
             
-            # Capture the very first response for the debugger
-            if raw_debug_json is None:
-                raw_debug_json = res
-            
+            # Credit retry logic
             if 'errors' in res and "credits" in res['errors'][0].get('message', '').lower():
-                time.sleep(12); r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS); res = r.json()
+                time.sleep(10); r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS); res = r.json()
             
-            edges = res.get('data', {}).get('products', {}).get('data', {}).get('edges', [])
-            for edge in edges:
-                node = edge['node']
-                ship_tags = [str(t).lower().strip() for t in node.get('tags', [])]
-                # Match logic: any tag contains selected tag
+            product_data = res.get('data', {}).get('product', {}).get('data')
+            if product_data:
+                ship_tags = [str(t).lower().strip() for t in product_data.get('tags', [])]
                 if any(sel in ship_tags for sel in normalized_selections):
-                    final_results.append(edge)
-            time.sleep(0.5)
+                    final_results.append(product_data)
+            
+            # Small sleep to prevent hitting credit limit too fast
+            time.sleep(0.2)
         except: continue
         
-    return final_results, raw_debug_json
+    progress_bar.empty()
+    return final_results
 
 # --- 6. UI SIDEBAR ---
 available_tags, tag_map = load_csv_data()
@@ -153,15 +147,13 @@ else:
         for tag in selected_tags: sku_pool.extend(tag_map.get(tag, []))
         sku_pool = list(set(sku_pool))
         
-        with st.spinner(f"Verifying {len(sku_pool)} SKUs..."):
-            raw_edges, debug_json = fetch_inventory_nuclear(sku_pool, selected_tags)
+        with st.spinner(f"Processing {len(sku_pool)} SKUs individually..."):
+            verified_products = fetch_inventory_individual(sku_pool, selected_tags)
             
         loc_type_map = get_loc_map()
         report_list = []
-        for edge in raw_edges:
-            node = edge['node']
+        for node in verified_products:
             for wh_prod in node.get('warehouse_products', []):
-                # Check both warehouses
                 if wh_prod['warehouse_id'] in [W_PRIMARY, W_NORTH]:
                     for loc_edge in wh_prod.get('locations', {}).get('edges', []):
                         l_node = loc_edge['node']
@@ -188,10 +180,7 @@ else:
             st.dataframe(df, use_container_width=True, hide_index=True)
             st.download_button("Download CSV", df.to_csv(index=False), "report.csv")
         else:
-            st.error("❌ No inventory found. Please check the debugger below.")
-            with st.expander("🛠️ API RAW DEBUGGER (Open this if no results found)"):
-                st.write("This is exactly what ShipHero sent back for your SKUs:")
-                st.json(debug_json)
+            st.error("❌ No matching inventory found in ShipHero for these SKUs.")
 
 # --- 8. FOOTER ---
-st.markdown(f'<div class="vp-footer">v5.8 | Vertical Passage Operations</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="vp-footer">v5.9 | Vertical Passage Operations</div>', unsafe_allow_html=True)
