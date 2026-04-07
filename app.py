@@ -33,11 +33,14 @@ st.image("snow-logo.png", width=240)
 st.markdown('</div>', unsafe_allow_html=True)
 
 # --- 2. API & FILE CONFIGURATION ---
-# IMPORTANT: Update your Secrets with the Full Access Token under this key name
 token = st.secrets.get("SHIPHERO_TOKEN_SNOW")
 SHIPHERO_API_URL = "https://public-api.shiphero.com/graphql"
 HEADERS = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 CSV_FILE = "updated_tags.csv" 
+
+# WAREHOUSE IDS FROM POSTMAN
+W_PRIMARY = "V2FyZWhvdXNlOjczNjY2"
+W_NORTH = "V2FyZWhvdXNlOjExNjI4OA=="
 
 # --- 3. STORAGE RATE CARD ---
 STORAGE_TYPES = {
@@ -74,16 +77,17 @@ def get_loc_map():
         return dict(zip(df['Location'].str.strip(), df['Type'].str.strip()))
     except: return {}
 
-# --- 5. UPDATED FETCH ENGINE (Zero-Qty Inclusive) ---
-def fetch_inventory_v5_5(sku_list, selected_tags):
+# --- 5. DUAL-WAREHOUSE FETCH ENGINE (Iteration 5.7) ---
+def fetch_inventory_dual_warehouse(sku_list, selected_tags):
     final_results = []
     normalized_selections = [str(t).lower().strip() for t in selected_tags]
     
-    for i in range(0, len(sku_list), 25):
-        batch = sku_list[i:i+25]
+    for i in range(0, len(sku_list), 15): # Smaller batches for deep warehouse queries
+        batch = sku_list[i:i+15]
         clean_batch = [str(s).strip() for s in batch if s]
         formatted_skus = json.dumps(clean_batch)
         
+        # Explicitly asking for BOTH warehouses in the query
         query = f"""
         query {{
           products(skus: {formatted_skus}) {{
@@ -92,6 +96,7 @@ def fetch_inventory_v5_5(sku_list, selected_tags):
                 node {{
                   sku name tags
                   warehouse_products {{
+                    warehouse_id
                     locations(first: 100) {{
                       edges {{ node {{ quantity location {{ name }} }} }}
                     }}
@@ -103,7 +108,7 @@ def fetch_inventory_v5_5(sku_list, selected_tags):
         }}
         """
         try:
-            r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS, timeout=35)
+            r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS, timeout=45)
             res = r.json()
             if 'errors' in res and "credits" in res['errors'][0].get('message', '').lower():
                 time.sleep(12); r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS); res = r.json()
@@ -139,31 +144,32 @@ else:
         for tag in selected_tags: sku_pool.extend(tag_map.get(tag, []))
         sku_pool = list(set(sku_pool))
         
-        with st.spinner(f"Querying ShipHero for {len(sku_pool)} SKUs..."):
-            raw_edges = fetch_inventory_v5_5(sku_pool, selected_tags)
+        with st.spinner(f"Searching Primary & VP North for {len(sku_pool)} SKUs..."):
+            raw_edges = fetch_inventory_dual_warehouse(sku_pool, selected_tags)
             
         loc_type_map = get_loc_map()
         report_list = []
         for edge in raw_edges:
             node = edge['node']
             for wh_prod in node.get('warehouse_products', []):
-                for loc_edge in wh_prod.get('locations', {}).get('edges', []):
-                    l_node = loc_edge['node']
-                    qty = l_node.get('quantity', 0)
-                    l_name = str(l_node.get('location', {}).get('name', 'Unknown')).strip()
-                    l_type = loc_type_map.get(l_name, "Unknown")
-                    rate = STORAGE_TYPES.get(l_type, 0.0)
-                    # Calculation remains inclusive of 0 qty
-                    cost = (rate * num_days) if qty > 0 else 0.0
-                    
-                    report_list.append({
-                        "Product Name": node.get('name'), "SKU": node.get('sku'), "Location": l_name,
-                        "Storage Type": l_type, "Inv Qty": qty, "Daily Rate": rate, "Period Cost": round(cost, 2)
-                    })
+                # Filter for our two specific warehouses just in case others exist
+                if wh_prod['warehouse_id'] in [W_PRIMARY, W_NORTH]:
+                    for loc_edge in wh_prod.get('locations', {}).get('edges', []):
+                        l_node = loc_edge['node']
+                        qty = l_node.get('quantity', 0)
+                        l_name = str(l_node.get('location', {}).get('name', 'Unknown')).strip()
+                        l_type = loc_type_map.get(l_name, "Unknown")
+                        rate = STORAGE_TYPES.get(l_type, 0.0)
+                        cost = (rate * num_days) if qty > 0 else 0.0
+                        
+                        report_list.append({
+                            "Product Name": node.get('name'), "SKU": node.get('sku'), "Location": l_name,
+                            "Storage Type": l_type, "Inv Qty": qty, "Daily Rate": rate, "Period Cost": round(cost, 2)
+                        })
 
         if report_list:
             df = pd.DataFrame(report_list)
-            st.success(f"Report generated for {len(df['SKU'].unique())} SKUs.")
+            st.success(f"Report generated successfully!")
             c1, c2 = st.columns(2)
             c1.metric("Total Period Cost", f"${df['Period Cost'].sum():,.2f}")
             c2.metric("Days Counted", f"{num_days} Days")
@@ -175,7 +181,8 @@ else:
             st.dataframe(df, use_container_width=True, hide_index=True)
             st.download_button("Download CSV", df.to_csv(index=False), "report.csv")
         else:
-            st.error("❌ No inventory found. Ensure your Full Access token is active and includes appropriate permissions.")
+            st.error("❌ Still no inventory records found.")
+            st.write("Despite checking Primary and VP North, no location data was returned for these SKUs. Ensure inventory is currently slotted in these warehouses.")
 
 # --- 8. FOOTER ---
-st.markdown(f'<div class="vp-footer">v5.5 | Vertical Passage Operations</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="vp-footer">v5.7 | Vertical Passage Operations</div>', unsafe_allow_html=True)
