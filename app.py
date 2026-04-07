@@ -11,28 +11,89 @@ st.set_page_config(page_title="VP Storage Report", page_icon="VP Warehouse Icon 
 
 st.markdown("""
     <style>
-    .block-container { padding-top: 1rem; padding-bottom: 8rem; }
-    [data-testid="stHeader"] { background-color: #0e1117; height: 0px; }
-    .logo-container { display: flex; justify-content: center; background-color: #0e1117; padding: 10px 0px; }
-    .report-header { text-align: center; margin-bottom: 0px; color: white; font-size: 42px; font-weight: bold; }
-    .client-logo-container { display: flex; justify-content: center; padding-top: 10px; padding-bottom: 20px; }
-    div.stButton > button { display: block; margin: 0 auto; width: 100%; background-color: #161b22; color: white; border: 1px solid #30363d; }
-    .vp-footer { position: fixed; left: 0; bottom: 0; width: 100%; background-color: #0e1117; color: #555e67; text-align: center; padding: 20px 0px; font-size: 13px; z-index: 999999; }
+    .block-container { 
+        padding-top: 2rem; /* Adjusted for centered header */
+        padding-bottom: 10rem; 
+    }
+    [data-testid="stHeader"] { 
+        background-color: #0e1117; 
+        height: 0px; 
+    }
+    
+    /* Main Centered Header Styling */
+    .report-header { 
+        text-align: center; 
+        margin-top: -20px !important;
+        margin-bottom: 20px; 
+        color: white; 
+        font-size: 42px; 
+        font-weight: bold; 
+    }
+    
+    /* Centering Generate Button */
+    div.stButton > button { 
+        display: block; 
+        margin: 0 auto; 
+        width: 100%; 
+        background-color: #161b22; 
+        color: white; 
+        border: 1px solid #30363d; 
+    }
+
+    /* FIXED FOOTER */
+    .vp-footer {
+        position: fixed;
+        left: 0;
+        bottom: 0;
+        width: 100%;
+        background-color: #0e1117;
+        color: #555e67;
+        text-align: center;
+        padding: 15px 0px;
+        font-size: 13px;
+        border-top: 1px solid #30363d;
+        z-index: 999999;
+    }
+    
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
+    
+    /* Sidebar Logo Adjustment */
+    [data-testid="stSidebar"] div.logo-container {
+        display: flex;
+        justify-content: center;
+        padding-top: 10px;
+        padding-bottom: 20px;
+    }
+    
+    /* Main Page Logo Adjustment */
+    div.main-logo-container {
+        position: fixed;
+        top: 2rem;
+        right: 2rem;
+        z-index: 999;
+    }
     </style>
     """, unsafe_allow_html=True)
 
-st.markdown('<div class="logo-container">', unsafe_allow_html=True)
-st.image("VP Logo Horizontal Transparent White Lettering.png", width=250)
-st.markdown('</div>', unsafe_allow_html=True)
+# --- 2. LOGO LAYOUT (Iteration 6.1 Split Design) ---
 
+# A. Vertical Passage Logo (Sidebar - Top Left)
+with st.sidebar:
+    st.markdown('<div class="logo-container">', unsafe_allow_html=True)
+    st.image("VP Logo Horizontal Transparent White Lettering.png", width=250)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# B. Centered Main Header
 st.markdown("<h1 class='report-header'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
-st.markdown('<div class="client-logo-container">', unsafe_allow_html=True)
-st.image("snow-logo.png", width=240) 
+
+# C. Snow Commerce Logo (Main Page - Top Right, Resized to Match VP Impact)
+st.markdown('<div class="main-logo-container">', unsafe_allow_html=True)
+# Adjusting width from 240 to 250 to perfectly mirror the VP logo impact
+st.image("snow-logo.png", width=250) 
 st.markdown('</div>', unsafe_allow_html=True)
 
-# --- 2. API & FILE CONFIGURATION ---
+# --- 3. API & FILE CONFIGURATION ---
 token = st.secrets.get("SHIPHERO_TOKEN_SNOW")
 SHIPHERO_API_URL = "https://public-api.shiphero.com/graphql"
 HEADERS = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -42,7 +103,7 @@ CSV_FILE = "updated_tags.csv"
 W_PRIMARY = "V2FyZWhvdXNlOjczNjY2"
 W_NORTH = "V2FyZWhvdXNlOjExNjI4OA=="
 
-# --- 3. STORAGE RATE CARD ---
+# --- 4. STORAGE RATE CARD ---
 STORAGE_TYPES = {
     "Standard Bin": 0.0442, "Bin": 0.0442, "Blue Bin Small": 0.0488, 
     "Blue Bin Medium": 0.1462, "Blue Bin Large": 0.2925, "Gray Bin Small": 0.1846,
@@ -56,7 +117,7 @@ STORAGE_TYPES = {
     "HD": 2.275, "DT - Pallet": 2.2074
 }
 
-# --- 4. DATA UTILITIES ---
+# --- 5. DATA UTILITIES ---
 @st.cache_data
 def load_csv_data():
     if not os.path.exists(CSV_FILE): return None, None
@@ -77,19 +138,21 @@ def get_loc_map():
         return dict(zip(df['Location'].str.strip(), df['Type'].str.strip()))
     except: return {}
 
-# --- 5. INDIVIDUAL FETCH ENGINE (Iteration 5.9) ---
-def fetch_inventory_individual(sku_list, selected_tags):
+# --- 6. ENHANCED FETCH ENGINE (Percentage Bar) ---
+def fetch_inventory_with_percentage(sku_list, selected_tags):
     final_results = []
     normalized_selections = [str(t).lower().strip() for t in selected_tags]
     
+    # Progress Indicators
+    progress_text = st.empty()
     progress_bar = st.progress(0)
     total_skus = len(sku_list)
     
     for idx, sku in enumerate(sku_list):
-        # Update progress bar
+        current_percent = int(((idx + 1) / total_skus) * 100)
+        progress_text.markdown(f"**Loading... {current_percent}%**")
         progress_bar.progress((idx + 1) / total_skus)
         
-        # We query ONE SKU at a time using 'sku' (singular)
         query = f"""
         query {{
           product(sku: "{sku.strip()}") {{
@@ -108,8 +171,6 @@ def fetch_inventory_individual(sku_list, selected_tags):
         try:
             r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS, timeout=15)
             res = r.json()
-            
-            # Credit retry logic
             if 'errors' in res and "credits" in res['errors'][0].get('message', '').lower():
                 time.sleep(10); r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS); res = r.json()
             
@@ -118,28 +179,24 @@ def fetch_inventory_individual(sku_list, selected_tags):
                 ship_tags = [str(t).lower().strip() for t in product_data.get('tags', [])]
                 if any(sel in ship_tags for sel in normalized_selections):
                     final_results.append(product_data)
-            
-            # Small sleep to prevent hitting credit limit too fast
-            time.sleep(0.2)
+            time.sleep(0.25)
         except: continue
         
+    progress_text.empty()
     progress_bar.empty()
     return final_results
 
-# --- 6. UI SIDEBAR ---
-available_tags, tag_map = load_csv_data()
-if available_tags is None:
-    st.sidebar.warning(f"⚠️ {CSV_FILE} not found!")
-    st.stop()
+# --- 7. UI SIDEBAR (Controls Only) ---
+with st.sidebar:
+    st.markdown("---") # Visual separator below the VP Logo
+    selected_tags = st.multiselect("Select Product Tag (Select all that apply)", options=available_tags)
+    date_range = st.date_input("Select Date Range", value=(date.today().replace(day=1), date.today()), format="MM/DD/YYYY")
+    st.markdown("<br>", unsafe_allow_html=True)
+    generate_btn = st.button("Generate Report")
 
-selected_tags = st.sidebar.multiselect("Select Product Tag (Select all that apply)", options=available_tags)
-date_range = st.sidebar.date_input("Select Date Range", value=(date.today().replace(day=1), date.today()), format="MM/DD/YYYY")
-st.sidebar.markdown("<br>", unsafe_allow_html=True)
-generate_btn = st.sidebar.button("Generate Report")
-
-# --- 7. MAIN CONTENT ---
+# --- 8. MAIN CONTENT ---
 if not selected_tags:
-    st.info("👈 Please select one or more product tags in the sidebar and click 'Generate Report'.")
+    st.info("👈 Please use the sidebar to select a product tag and date range to begin.")
 else:
     if generate_btn:
         num_days = (date_range[1] - date_range[0]).days + 1 if isinstance(date_range, tuple) and len(date_range) == 2 else 1
@@ -147,8 +204,7 @@ else:
         for tag in selected_tags: sku_pool.extend(tag_map.get(tag, []))
         sku_pool = list(set(sku_pool))
         
-        with st.spinner(f"Processing {len(sku_pool)} SKUs individually..."):
-            verified_products = fetch_inventory_individual(sku_pool, selected_tags)
+        verified_products = fetch_inventory_with_percentage(sku_pool, selected_tags)
             
         loc_type_map = get_loc_map()
         report_list = []
@@ -170,17 +226,19 @@ else:
 
         if report_list:
             df = pd.DataFrame(report_list)
-            st.success(f"Report Generated!")
+            st.success(f"Verified {len(df['SKU'].unique())} unique SKUs.")
             c1, c2 = st.columns(2)
             c1.metric("Total Period Cost", f"${df['Period Cost'].sum():,.2f}")
             c2.metric("Days Counted", f"{num_days} Days")
+            
             st.sidebar.subheader("Cost Breakdown")
             summary = df.groupby("Storage Type").agg(Qty=('Location', 'count'), Cost=('Period Cost', 'sum')).reset_index()
             st.sidebar.dataframe(summary, hide_index=True)
+            
             st.dataframe(df, use_container_width=True, hide_index=True)
             st.download_button("Download CSV", df.to_csv(index=False), "report.csv")
         else:
-            st.error("❌ No matching inventory found in ShipHero for these SKUs.")
+            st.error("❌ No matching inventory found in ShipHero. Verification failed.")
 
-# --- 8. FOOTER ---
-st.markdown(f'<div class="vp-footer">v5.9 | Vertical Passage Operations</div>', unsafe_allow_html=True)
+# --- 9. FOOTER ---
+st.markdown(f'<div class="vp-footer">v6.1 | Vertical Passage Operations</div>', unsafe_allow_html=True)
