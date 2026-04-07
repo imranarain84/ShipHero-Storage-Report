@@ -144,7 +144,7 @@ generate_btn = st.sidebar.button("Generate Report")
 
 # --- 6. MAIN DASHBOARD RENDER ---
 if not selected_tag:
-    st.markdown("<h1 class='report-header'>Storage Report</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 class='report-header'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
     st.markdown('<div class="client-logo-container">', unsafe_allow_html=True)
     st.image("snow-logo.png", width=240) # 2.5 inches approx
     st.markdown('</div>', unsafe_allow_html=True)
