@@ -1,5 +1,5 @@
 import streamlit as st
-import pd
+import pandas as pd
 import requests
 import time
 import json
@@ -20,24 +20,14 @@ st.markdown("""
         height: 0px; 
     }
     
-    /* Logo and Title Header Container */
-    .brand-container {
+    /* Center the title vertically with the logos */
+    .header-text {
         display: flex;
-        justify-content: space-between;
         align-items: center;
-        padding: 10px 20px;
-        background-color: #0e1117;
-        margin-bottom: 20px;
-        border-bottom: 1px solid #30363d;
-    }
-    
-    .report-header { 
-        text-align: center; 
-        color: white; 
-        font-size: 36px; 
-        font-weight: bold;
+        justify-content: center;
+        height: 100%;
         margin: 0;
-        flex-grow: 1;
+        padding-top: 10px;
     }
 
     div.stButton > button { 
@@ -68,23 +58,21 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. HEADER LAYOUT (Centered Logos & Title) ---
-st.markdown(f"""
-    <div class="brand-container">
-        <img src="https://raw.githubusercontent.com/YOUR_REPO/main/VP%20Logo%20Horizontal%20Transparent%20White%20Lettering.png" width="220">
-        <div class="report-header">Warehouse Storage Cost Report</div>
-        <img src="https://raw.githubusercontent.com/YOUR_REPO/main/snow-logo.png" width="220">
-    </div>
-    """, unsafe_allow_html=True)
+# --- 2. CENTERED HEADER LAYOUT ---
+# Using columns to ensure perfect horizontal centering
+h_col1, h_col2, h_col3 = st.columns([1, 2, 1])
 
-# Note: If using local files, use st.columns for the header instead of raw HTML:
-col1, col2, col3 = st.columns([1, 2, 1])
-with col1:
+with h_col1:
     st.image("VP Logo Horizontal Transparent White Lettering.png", width=220)
-with col2:
-    st.markdown("<h1 style='text-align: center; color: white; font-size: 32px;'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
-with col3:
+
+with h_col2:
+    st.markdown("<div class='header-text'><h1 style='text-align: center; color: white; font-size: 32px; margin: 0;'>Warehouse Storage Cost Report</h1></div>", unsafe_allow_html=True)
+
+with h_col3:
+    # Right-align the Snow logo within its column
+    st.markdown("<div style='text-align: right;'>", unsafe_allow_html=True)
     st.image("snow-logo.png", width=220)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 st.markdown("---")
 
@@ -204,7 +192,7 @@ else:
 
         if report_list:
             df = pd.DataFrame(report_list)
-            st.success(f"Verified {len(df['SKU'].unique())} SKUs.")
+            st.success(f"Verified {len(df['SKU'].unique())} unique SKUs.")
             c1, c2 = st.columns(2)
             c1.metric("Total Period Cost", f"${df['Period Cost'].sum():,.2f}")
             c2.metric("Days Counted", f"{num_days} Days")
@@ -219,4 +207,4 @@ else:
             st.error("❌ No matching inventory found.")
 
 # --- 7. FOOTER ---
-st.markdown(f'<div class="vp-footer">v6.3 | Vertical Passage Operations</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="vp-footer">v6.4 | Vertical Passage Operations</div>', unsafe_allow_html=True)
