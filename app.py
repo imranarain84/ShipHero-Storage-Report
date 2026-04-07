@@ -11,12 +11,12 @@ st.set_page_config(
     layout="wide"
 )
 
-# Professional CSS for compact layout and custom fixed footer
+# Professional CSS for compact layout and visible fixed footer
 st.markdown("""
     <style>
     .block-container {
         padding-top: 1rem;
-        padding-bottom: 5rem; 
+        padding-bottom: 6rem; /* Increased padding so footer doesn't hide content */
     }
     [data-testid="stHeader"] {
         background-color: #0e1117;
@@ -32,20 +32,19 @@ st.markdown("""
         margin-top: -15px !important;
         text-align: center;
     }
-    /* Custom Footer Styling */
-    .footer {
+    /* Custom Footer Styling - Ensured visibility */
+    .custom-footer {
         position: fixed;
         left: 0;
         bottom: 0;
         width: 100%;
-        background-color: #0e1117;
-        color: #666;
+        background-color: #161b22;
+        color: #8b949e;
         text-align: center;
-        padding: 15px;
-        font-size: 11px;
-        border-top: 1px solid #333;
-        z-index: 999;
-        letter-spacing: 0.5px;
+        padding: 15px 0;
+        font-size: 12px;
+        border-top: 1px solid #30363d;
+        z-index: 9999;
     }
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
@@ -76,32 +75,37 @@ STORAGE_TYPES = {
     "HD": 2.275, "DT - Pallet": 2.2074
 }
 
-# --- 4. OPTIMIZED TAG FETCHING WITH PROGRESS BAR ---
+# --- 4. CONSERVATIVE TAG FETCHING (ANTI-CRASH) ---
 def fetch_all_tags():
     all_tags = set()
     cursor = None
     has_next = True
     
-    # Visible Progress in Sidebar
     progress_text = st.sidebar.empty()
     progress_bar = st.sidebar.progress(0)
     
     page_count = 0
     while has_next:
         page_count += 1
-        progress_text.text(f"Fetching Tags (Page {page_count})...")
-        progress_bar.progress(min(page_count * 10, 100)) # Increment visual bar
+        progress_text.text(f"Scanning Catalog: Page {page_count}...")
         
         cursor_arg = f', after: "{cursor}"' if cursor else ""
-        query = f"query {{ products {{ data(first: 500{cursor_arg}) {{ pageInfo {{ hasNextPage endCursor }} edges {{ node {{ tags }} }} }} }} }}"
+        # Reduced from 500 to 100 to lower "Credit Cost" per request
+        query = f"query {{ products {{ data(first: 100{cursor_arg}) {{ pageInfo {{ hasNextPage endCursor }} edges {{ node {{ tags }} }} }} }} }}"
         
         try:
             r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS, timeout=20)
             res = r.json()
             
             if 'errors' in res:
-                st.sidebar.error(f"API Error: {res['errors'][0]['message']}")
-                break
+                error_msg = res['errors'][0].get('message', '')
+                if "credits" in error_msg.lower():
+                    progress_text.warning("Refilling API Credits... Waiting 5s")
+                    time.sleep(6) # Wait for refill
+                    continue # Retry same page
+                else:
+                    st.sidebar.error(f"API Error: {error_msg}")
+                    break
                 
             data = res.get('data', {}).get('products', {}).get('data', {})
             edges = data.get('edges', [])
@@ -115,6 +119,9 @@ def fetch_all_tags():
             has_next = data.get('pageInfo', {}).get('hasNextPage', False)
             cursor = data.get('pageInfo', {}).get('endCursor')
             
+            # MANDATORY PAUSE: Keeps the "Credit" consumption steady
+            time.sleep(1.5)
+            
         except Exception as e:
             st.sidebar.error(f"Connection Failed: {e}")
             break
@@ -123,7 +130,7 @@ def fetch_all_tags():
     progress_bar.empty()
     return sorted(list(all_tags))
 
-# --- 5. TARGETED DATA FETCHING (AFTER TAG SELECTION) ---
+# --- 5. TARGETED DATA FETCHING ---
 @st.cache_data(ttl=300)
 def fetch_report_data(selected_tags):
     report_data = []
@@ -135,13 +142,13 @@ def fetch_report_data(selected_tags):
             query = f"""
             query {{
               products(tag: "{tag}") {{
-                data(first: 100{cursor_arg}) {{
+                data(first: 50{cursor_arg}) {{
                   pageInfo {{ hasNextPage endCursor }}
                   edges {{
                     node {{
                       sku name tags
                       warehouse_products {{
-                        locations(first: 20) {{
+                        locations(first: 15) {{
                           edges {{ node {{ quantity location {{ name }} }} }}
                         }}
                       }}
@@ -154,24 +161,24 @@ def fetch_report_data(selected_tags):
             r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS, timeout=20)
             res = r.json()
             
-            # Handle Credit Limit Retry
             if 'errors' in res and "credits" in res['errors'][0].get('message', ''):
-                time.sleep(5)
+                time.sleep(7)
                 continue
                 
             page = res.get('data', {}).get('products', {}).get('data', {})
             report_data.extend(page.get('edges', []))
             has_next = page.get('pageInfo', {}).get('hasNextPage', False)
             cursor = page.get('pageInfo', {}).get('endCursor')
+            time.sleep(1) # Breath between pages
             
     return report_data
 
 # --- 6. UI FLOW ---
-st.sidebar.header("1. Data Initialization")
+st.sidebar.header("1. Initialization")
 tags_list = fetch_all_tags()
 
 if not tags_list:
-    st.sidebar.warning("No tags found. Please check your API Token.")
+    st.sidebar.warning("⚠️ No tags found. Check API Token / Credits.")
     selected_tags = []
 else:
     selected_tags = st.sidebar.multiselect("Select Product Tags", options=tags_list)
@@ -183,7 +190,7 @@ date_range = st.sidebar.date_input("Select Range", value=(today.replace(day=1), 
 
 if not selected_tags:
     st.title("📦 Storage Report")
-    st.info("👈 Please select one or more Product Tags in the sidebar to generate your report.")
+    st.info("👈 Use the sidebar to select Product Tags. The report will generate automatically.")
     st.stop()
 
 if isinstance(date_range, tuple) and len(date_range) == 2:
@@ -192,8 +199,7 @@ if isinstance(date_range, tuple) and len(date_range) == 2:
 else:
     num_days = 1
 
-# Only run heavy fetch after tags are selected
-with st.spinner(f"Fetching inventory for: {', '.join(selected_tags)}..."):
+with st.spinner(f"Building report for: {', '.join(selected_tags)}..."):
     raw_edges = fetch_report_data(selected_tags)
 
 # --- 7. PROCESSING & DISPLAY ---
@@ -217,7 +223,6 @@ for edge in raw_edges:
             l_type = loc_type_map.get(l_name, "Unknown")
             daily_rate = STORAGE_TYPES.get(l_type, 0.0)
             
-            # Logic: 0 Qty = 0 Cost
             cost = (daily_rate * num_days) if qty > 0 else 0.0
             
             report_list.append({
@@ -238,12 +243,10 @@ if report_list:
     c1.metric("Total Period Cost", f"${df['Period Cost'].sum():,.2f}")
     c2.metric("Days Counted", f"{num_days} Days")
 
-    # Sidebar Summary
     st.sidebar.subheader("Cost Breakdown")
     summary = df.groupby("Storage Type").agg(Qty=('Location', 'count'), Cost=('Period Cost', 'sum')).reset_index()
     st.sidebar.dataframe(summary, hide_index=True, column_config={"Cost": st.column_config.NumberColumn(format="$%.2f")})
 
-    # Main Data Table
     st.dataframe(df, use_container_width=True, hide_index=True, column_config={
         "Daily Rate": st.column_config.NumberColumn(format="$%.4f"),
         "Period Cost": st.column_config.NumberColumn(format="$%.2f")
@@ -252,9 +255,9 @@ if report_list:
 else:
     st.warning("No inventory found for the selected tags.")
 
-# --- 8. FOOTER WITH ITERATION ---
+# --- 8. VISIBLE FOOTER ---
 st.markdown(f"""
-    <div class="footer">
-        Vertical Passage Warehouse Operations | Iteration: 2.1 | Revision: {date.today().strftime('%B %d, %Y')}
+    <div class="custom-footer">
+        Vertical Passage Warehouse Operations | Iteration: 2.5 | Revision: {date.today().strftime('%B %d, %Y')}
     </div>
     """, unsafe_allow_html=True)
