@@ -28,6 +28,7 @@ st.markdown("""
     .report-header {
         text-align: center;
         margin-bottom: 0px;
+        color: white;
     }
     .client-logo-container {
         display: flex;
@@ -41,6 +42,9 @@ st.markdown("""
         display: block;
         margin: 0 auto;
         width: 100%;
+        background-color: #161b22;
+        color: white;
+        border: 1px solid #30363d;
     }
 
     /* Minimal Professional Footer */
@@ -62,9 +66,14 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# Main VP Branding
+# PERMANENT BRANDING (Top of every page)
 st.markdown('<div class="logo-container">', unsafe_allow_html=True)
 st.image("VP Logo Horizontal Transparent White Lettering.png", width=250)
+st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown("<h1 class='report-header'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
+st.markdown('<div class="client-logo-container">', unsafe_allow_html=True)
+st.image("snow-logo.png", width=240) 
 st.markdown('</div>', unsafe_allow_html=True)
 
 # --- 2. API & FILE CONFIGURATION ---
@@ -126,15 +135,19 @@ def fetch_inventory_for_skus(sku_list):
         except: continue
     return all_results
 
-# --- 5. UI FLOW & SIDEBAR ---
+# --- 5. SIDEBAR CONTROLS ---
 available_tags, tag_map = load_csv_data()
 
 if available_tags is None:
     st.sidebar.warning(f"⚠️ {CSV_FILE} not found!")
     st.stop()
 
-# Clean Sidebar Labels
-selected_tag = st.sidebar.selectbox("Select Product Tag", options=[""] + available_tags)
+# Multi-select with explicit label
+selected_tags = st.sidebar.multiselect(
+    "Select Product Tag (Select all that apply)", 
+    options=available_tags,
+    help="You can select multiple tags to combine them into one report."
+)
 
 today = date.today()
 date_range = st.sidebar.date_input("Select Date Range", value=(today.replace(day=1), today), format="MM/DD/YYYY")
@@ -142,65 +155,71 @@ date_range = st.sidebar.date_input("Select Date Range", value=(today.replace(day
 st.sidebar.markdown("<br>", unsafe_allow_html=True)
 generate_btn = st.sidebar.button("Generate Report")
 
-# --- 6. MAIN DASHBOARD RENDER ---
-if not selected_tag:
-    st.markdown("<h1 class='report-header'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
-    st.markdown('<div class="client-logo-container">', unsafe_allow_html=True)
-    st.image("snow-logo.png", width=240) # 2.5 inches approx
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    st.info("👈 Use the sidebar to select a product tag and date range to begin.")
-    st.stop()
-
-if generate_btn:
-    num_days = (date_range[1] - date_range[0]).days + 1 if isinstance(date_range, tuple) and len(date_range) == 2 else 1
-    skus_to_fetch = tag_map.get(selected_tag, [])
-    
-    with st.spinner(f"Fetching {len(skus_to_fetch)} SKUs..."):
-        raw_edges = fetch_inventory_for_skus(skus_to_fetch)
+# --- 6. MAIN CONTENT LOGIC ---
+if not selected_tags:
+    st.info("👈 Please select one or more product tags in the sidebar and click 'Generate Report'.")
+else:
+    if generate_btn:
+        num_days = (date_range[1] - date_range[0]).days + 1 if isinstance(date_range, tuple) and len(date_range) == 2 else 1
         
-    loc_type_map = get_loc_map()
-    report_list = []
-
-    for edge in raw_edges:
-        node = edge['node']
-        for wh_prod in node.get('warehouse_products', []):
-            for loc_edge in wh_prod.get('locations', {}).get('edges', []):
-                l_node = loc_edge['node']
-                qty, l_name = l_node.get('quantity', 0), l_node.get('location', {}).get('name', 'Unknown')
-                l_type = loc_type_map.get(l_name, "Unknown")
-                rate = STORAGE_TYPES.get(l_type, 0.0)
-                cost = (rate * num_days) if qty > 0 else 0.0
-                report_list.append({
-                    "Product Name": node.get('name'), "SKU": node.get('sku'), "Location": l_name,
-                    "Storage Type": l_type, "Inv Qty": qty, "Daily Rate": rate, "Period Cost": round(cost, 2)
-                })
-
-    if report_list:
-        df = pd.DataFrame(report_list)
+        # Combine all SKUs for all selected tags
+        all_skus_to_fetch = []
+        for tag in selected_tags:
+            all_skus_to_fetch.extend(tag_map.get(tag, []))
         
-        # Result Header
-        st.markdown("<h1 class='report-header'>Storage Report</h1>", unsafe_allow_html=True)
-        st.markdown('<div class="client-logo-container">', unsafe_allow_html=True)
-        st.image("snow-logo.png", width=240)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        c1, c2 = st.columns(2)
-        c1.metric("Total Period Cost", f"${df['Period Cost'].sum():,.2f}")
-        c2.metric("Days Counted", f"{num_days} Days")
+        # Remove duplicates if a SKU is under multiple tags
+        all_skus_to_fetch = list(set(all_skus_to_fetch))
         
-        st.sidebar.subheader("Cost Breakdown")
-        summary = df.groupby("Storage Type").agg(Qty=('Location', 'count'), Cost=('Period Cost', 'sum')).reset_index()
-        st.sidebar.dataframe(summary, hide_index=True)
+        with st.spinner(f"Fetching {len(all_skus_to_fetch)} SKUs..."):
+            raw_edges = fetch_inventory_for_skus(all_skus_to_fetch)
+            
+        loc_type_map = get_loc_map()
+        report_list = []
 
-        st.dataframe(df, use_container_width=True, hide_index=True)
-        st.download_button("Download CSV", df.to_csv(index=False), f"{selected_tag}_report.csv")
-    else:
-        st.warning("No inventory found for the selected criteria.")
+        for edge in raw_edges:
+            node = edge['node']
+            for wh_prod in node.get('warehouse_products', []):
+                for loc_edge in wh_prod.get('locations', {}).get('edges', []):
+                    l_node = loc_edge['node']
+                    qty, l_name = l_node.get('quantity', 0), l_node.get('location', {}).get('name', 'Unknown')
+                    l_type = loc_type_map.get(l_name, "Unknown")
+                    rate = STORAGE_TYPES.get(l_type, 0.0)
+                    cost = (rate * num_days) if qty > 0 else 0.0
+                    report_list.append({
+                        "Product Name": node.get('name'), 
+                        "SKU": node.get('sku'), 
+                        "Location": l_name,
+                        "Storage Type": l_type, 
+                        "Inv Qty": qty, 
+                        "Daily Rate": rate, 
+                        "Period Cost": round(cost, 2)
+                    })
 
-# --- 7. FOOTER (MATCHING INVOICE STYLE) ---
+        if report_list:
+            df = pd.DataFrame(report_list)
+            
+            # Metrics Row
+            c1, c2 = st.columns(2)
+            c1.metric("Total Period Cost", f"${df['Period Cost'].sum():,.2f}")
+            c2.metric("Days Counted", f"{num_days} Days")
+            
+            # Sidebar Cost Breakdown Table
+            st.sidebar.subheader("Cost Breakdown")
+            summary = df.groupby("Storage Type").agg(Qty=('Location', 'count'), Cost=('Period Cost', 'sum')).reset_index()
+            st.sidebar.dataframe(summary, hide_index=True)
+
+            # Main Data Table
+            st.dataframe(df, use_container_width=True, hide_index=True)
+            
+            # Dynamic filename based on selection
+            download_name = f"{selected_tags[0].replace(' ', '_')}_combined_report.csv"
+            st.download_button("Download CSV Report", df.to_csv(index=False), download_name)
+        else:
+            st.warning("No inventory found for the selected criteria.")
+
+# --- 7. FOOTER (v4.6) ---
 st.markdown(f"""
     <div class="vp-footer">
-        v4.5 | Vertical Passage Operations
+        v4.6 | Vertical Passage Operations
     </div>
     """, unsafe_allow_html=True)
