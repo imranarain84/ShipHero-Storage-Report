@@ -13,7 +13,7 @@ st.markdown("""
     <style>
     .block-container { 
         padding-top: 1rem; 
-        padding-bottom: 10rem; /* Increased to ensure space for the footer */
+        padding-bottom: 8rem; 
     }
     [data-testid="stHeader"] { 
         background-color: #0e1117; 
@@ -30,19 +30,24 @@ st.markdown("""
         text-align: center; 
     }
     
-    /* STICKY FOOTER - Iteration 4.3 Specific Styling */
+    /* Centering the Generate Button in the Sidebar */
+    div.stButton > button {
+        display: block;
+        margin: 0 auto;
+        width: 100%;
+    }
+
+    /* Minimal Professional Footer - Matching Screenshot Style */
     .vp-footer {
         position: fixed;
         left: 0;
         bottom: 0;
         width: 100%;
-        background-color: #111418;
-        color: #00ffcc; /* Bright color to ensure it stands out */
+        background-color: #0e1117;
+        color: #555e67;
         text-align: center;
-        padding: 15px 0px;
+        padding: 20px 0px;
         font-size: 13px;
-        font-weight: bold;
-        border-top: 2px solid #00ffcc;
         z-index: 999999;
     }
     
@@ -115,26 +120,25 @@ def fetch_inventory_for_skus(sku_list):
         except: continue
     return all_results
 
-# --- 6. UI FLOW ---
-st.sidebar.header("1. Initialization")
+# --- 6. UI FLOW & SIDEBAR ---
 available_tags, tag_map = load_csv_data()
 
 if available_tags is None:
     st.sidebar.warning(f"⚠️ {CSV_FILE} not found!")
     st.stop()
 
-selected_tag = st.sidebar.selectbox("Select Client Tag", options=[""] + available_tags)
+# Updated Sidebar Labels per request
+selected_tag = st.sidebar.selectbox("Select Product Tag", options=[""] + available_tags)
 
-st.sidebar.markdown("---")
-st.sidebar.header("2. Date Range")
 today = date.today()
-date_range = st.sidebar.date_input("Select Range", value=(today.replace(day=1), today), format="MM/DD/YYYY")
+date_range = st.sidebar.date_input("Select Date Range", value=(today.replace(day=1), today), format="MM/DD/YYYY")
 
-generate_btn = st.sidebar.button("🚀 Generate Report")
+st.sidebar.markdown("<br>", unsafe_allow_html=True) # Spacer
+generate_btn = st.sidebar.button("Generate Report")
 
 if not selected_tag:
     st.title("📦 SKU-Targeted Storage Report")
-    st.info("👈 Select a tag in the sidebar and hit Generate.")
+    st.info("👈 Use the sidebar to select a product tag and date range.")
     st.stop()
 
 if generate_btn:
@@ -175,11 +179,11 @@ if generate_btn:
         st.dataframe(df, use_container_width=True, hide_index=True)
         st.download_button("Download CSV", df.to_csv(index=False), f"{selected_tag}_report.csv")
     else:
-        st.warning("No inventory found.")
+        st.warning("No inventory found for the selected criteria.")
 
-# --- 7. NEW VISIBLE FOOTER ---
+# --- 7. REFORMATTED FOOTER (MATCHING SCREENSHOT) ---
 st.markdown(f"""
     <div class="vp-footer">
-        VERTICAL PASSAGE WAREHOUSE OPERATIONS | ITERATION: 4.3 | REVISION: {date.today().strftime('%B %d, %Y')}
+        v4.4 | Vertical Passage Operations
     </div>
     """, unsafe_allow_html=True)
