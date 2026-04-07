@@ -11,66 +11,24 @@ st.set_page_config(page_title="VP Storage Report", page_icon="VP Warehouse Icon 
 
 st.markdown("""
     <style>
-    .block-container { 
-        padding-top: 1rem; 
-        padding-bottom: 8rem; 
-    }
-    [data-testid="stHeader"] { 
-        background-color: #0e1117; 
-        height: 0px; 
-    }
-    .logo-container { 
-        display: flex; 
-        justify-content: center; 
-        background-color: #0e1117; 
-        padding: 10px 0px; 
-    }
-    .report-header {
-        text-align: center;
-        margin-bottom: 0px;
-        color: white;
-    }
-    .client-logo-container {
-        display: flex;
-        justify-content: center;
-        padding-top: 10px;
-        padding-bottom: 20px;
-    }
-    
-    /* Centering the Generate Button in the Sidebar */
-    div.stButton > button {
-        display: block;
-        margin: 0 auto;
-        width: 100%;
-        background-color: #161b22;
-        color: white;
-        border: 1px solid #30363d;
-    }
-
-    /* Minimal Professional Footer */
-    .vp-footer {
-        position: fixed;
-        left: 0;
-        bottom: 0;
-        width: 100%;
-        background-color: #0e1117;
-        color: #555e67;
-        text-align: center;
-        padding: 20px 0px;
-        font-size: 13px;
-        z-index: 999999;
-    }
-    
+    .block-container { padding-top: 1rem; padding-bottom: 8rem; }
+    [data-testid="stHeader"] { background-color: #0e1117; height: 0px; }
+    .logo-container { display: flex; justify-content: center; background-color: #0e1117; padding: 10px 0px; }
+    .report-header { text-align: center; margin-bottom: 0px; color: white; font-size: 42px; font-weight: bold; }
+    .client-logo-container { display: flex; justify-content: center; padding-top: 10px; padding-bottom: 20px; }
+    div.stButton > button { display: block; margin: 0 auto; width: 100%; background-color: #161b22; color: white; border: 1px solid #30363d; }
+    .vp-footer { position: fixed; left: 0; bottom: 0; width: 100%; background-color: #0e1117; color: #555e67; text-align: center; padding: 20px 0px; font-size: 13px; z-index: 999999; }
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     </style>
     """, unsafe_allow_html=True)
 
-# PERMANENT BRANDING (Top of every page)
+# PERMANENT BRANDING (Vertical Passage Top Logo)
 st.markdown('<div class="logo-container">', unsafe_allow_html=True)
 st.image("VP Logo Horizontal Transparent White Lettering.png", width=250)
 st.markdown('</div>', unsafe_allow_html=True)
 
+# UPDATED HEADER & CLIENT LOGO
 st.markdown("<h1 class='report-header'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
 st.markdown('<div class="client-logo-container">', unsafe_allow_html=True)
 st.image("snow-logo.png", width=240) 
@@ -117,36 +75,42 @@ def get_loc_map():
         return dict(zip(df['Location'], df['Type']))
     except: return {}
 
-def fetch_inventory_for_skus(sku_list):
-    all_results = []
-    for i in range(0, len(sku_list), 50):
-        batch = sku_list[i:i+50]
-        formatted_skus = json.dumps([str(s) for s in batch])
+# --- 5. VERIFICATION FETCH ---
+def fetch_inventory_with_tag_verification(sku_list, target_tags):
+    verified_results = []
+    normalized_targets = [t.lower().strip() for t in target_tags]
+    
+    for i in range(0, len(sku_list), 40):
+        batch = sku_list[i:i+40]
+        formatted_skus = json.dumps([str(s).strip() for s in batch])
         query = f"query {{ products(skus: {formatted_skus}) {{ data(first: 50) {{ edges {{ node {{ sku name tags warehouse_products {{ locations(first: 10) {{ edges {{ node {{ quantity location {{ name }} }} }} }} }} }} }} }} }} }}"
+        
         try:
-            r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS, timeout=25)
+            r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS, timeout=30)
             res = r.json()
-            if 'errors' in res and "credits" in res['errors'][0].get('message', ''):
-                time.sleep(7)
-                r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS)
-                res = r.json()
-            all_results.extend(res.get('data', {}).get('products', {}).get('data', {}).get('edges', []))
+            if 'errors' in res and "credits" in res['errors'][0].get('message', '').lower():
+                time.sleep(8); r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS); res = r.json()
+            
+            edges = res.get('data', {}).get('products', {}).get('data', {}).get('edges', [])
+            for edge in edges:
+                shiphero_tags = [t.lower().strip() for t in edge['node'].get('tags', [])]
+                if any(target in shiphero_tags for target in normalized_targets):
+                    verified_results.append(edge)
             time.sleep(0.5)
         except: continue
-    return all_results
+    return verified_results
 
-# --- 5. SIDEBAR CONTROLS ---
+# --- 6. UI SIDEBAR ---
 available_tags, tag_map = load_csv_data()
 
 if available_tags is None:
     st.sidebar.warning(f"⚠️ {CSV_FILE} not found!")
     st.stop()
 
-# Multi-select with explicit label
 selected_tags = st.sidebar.multiselect(
     "Select Product Tag (Select all that apply)", 
     options=available_tags,
-    help="You can select multiple tags to combine them into one report."
+    help="SKUs must contain at least one of these tags in ShipHero."
 )
 
 today = date.today()
@@ -155,23 +119,19 @@ date_range = st.sidebar.date_input("Select Date Range", value=(today.replace(day
 st.sidebar.markdown("<br>", unsafe_allow_html=True)
 generate_btn = st.sidebar.button("Generate Report")
 
-# --- 6. MAIN CONTENT LOGIC ---
+# --- 7. MAIN CONTENT RENDER ---
 if not selected_tags:
     st.info("👈 Please select one or more product tags in the sidebar and click 'Generate Report'.")
 else:
     if generate_btn:
         num_days = (date_range[1] - date_range[0]).days + 1 if isinstance(date_range, tuple) and len(date_range) == 2 else 1
         
-        # Combine all SKUs for all selected tags
-        all_skus_to_fetch = []
-        for tag in selected_tags:
-            all_skus_to_fetch.extend(tag_map.get(tag, []))
+        candidate_skus = []
+        for tag in selected_tags: candidate_skus.extend(tag_map.get(tag, []))
+        candidate_skus = list(set(candidate_skus))
         
-        # Remove duplicates if a SKU is under multiple tags
-        all_skus_to_fetch = list(set(all_skus_to_fetch))
-        
-        with st.spinner(f"Fetching {len(all_skus_to_fetch)} SKUs..."):
-            raw_edges = fetch_inventory_for_skus(all_skus_to_fetch)
+        with st.spinner(f"Verifying {len(candidate_skus)} SKUs..."):
+            raw_edges = fetch_inventory_with_tag_verification(candidate_skus, selected_tags)
             
         loc_type_map = get_loc_map()
         report_list = []
@@ -183,43 +143,30 @@ else:
                     l_node = loc_edge['node']
                     qty, l_name = l_node.get('quantity', 0), l_node.get('location', {}).get('name', 'Unknown')
                     l_type = loc_type_map.get(l_name, "Unknown")
-                    rate = STORAGE_TYPES.get(l_type, 0.0)
-                    cost = (rate * num_days) if qty > 0 else 0.0
+                    rate, cost = STORAGE_TYPES.get(l_type, 0.0), (STORAGE_TYPES.get(l_type, 0.0) * num_days) if l_node.get('quantity', 0) > 0 else 0.0
                     report_list.append({
-                        "Product Name": node.get('name'), 
-                        "SKU": node.get('sku'), 
-                        "Location": l_name,
-                        "Storage Type": l_type, 
-                        "Inv Qty": qty, 
-                        "Daily Rate": rate, 
-                        "Period Cost": round(cost, 2)
+                        "Product Name": node.get('name'), "SKU": node.get('sku'), "Location": l_name,
+                        "Storage Type": l_type, "Inv Qty": qty, "Daily Rate": rate, "Period Cost": round(cost, 2)
                     })
 
         if report_list:
             df = pd.DataFrame(report_list)
-            
-            # Metrics Row
             c1, c2 = st.columns(2)
             c1.metric("Total Period Cost", f"${df['Period Cost'].sum():,.2f}")
             c2.metric("Days Counted", f"{num_days} Days")
             
-            # Sidebar Cost Breakdown Table
             st.sidebar.subheader("Cost Breakdown")
             summary = df.groupby("Storage Type").agg(Qty=('Location', 'count'), Cost=('Period Cost', 'sum')).reset_index()
             st.sidebar.dataframe(summary, hide_index=True)
 
-            # Main Data Table
             st.dataframe(df, use_container_width=True, hide_index=True)
-            
-            # Dynamic filename based on selection
-            download_name = f"{selected_tags[0].replace(' ', '_')}_combined_report.csv"
-            st.download_button("Download CSV Report", df.to_csv(index=False), download_name)
+            st.download_button("Download CSV Report", df.to_csv(index=False), "report.csv")
         else:
-            st.warning("No inventory found for the selected criteria.")
+            st.error("No inventory found. Ensure CSV SKUs match ShipHero tags.")
 
-# --- 7. FOOTER (v4.6) ---
+# --- 8. REFORMATTED FOOTER (v4.7.1) ---
 st.markdown(f"""
     <div class="vp-footer">
-        v4.6 | Vertical Passage Operations
+        v4.7.1 | Vertical Passage Operations
     </div>
     """, unsafe_allow_html=True)
