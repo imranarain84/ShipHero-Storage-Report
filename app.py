@@ -11,18 +11,48 @@ st.set_page_config(
     layout="wide"
 )
 
+# Professional CSS for compact layout and custom fixed footer
 st.markdown("""
     <style>
-    .block-container { padding-top: 1rem; padding-bottom: 3rem; }
-    [data-testid="stHeader"] { background-color: #0e1117; height: 0px; }
-    .logo-container { display: flex; justify-content: center; background-color: #0e1117; padding: 10px 0px; }
-    h1 { margin-top: -15px !important; text-align: center; }
-    .footer { position: fixed; left: 0; bottom: 0; width: 100%; background-color: #0e1117; color: #555; text-align: center; padding: 10px; font-size: 12px; border-top: 1px solid #333; z-index: 999; }
+    .block-container {
+        padding-top: 1rem;
+        padding-bottom: 5rem; 
+    }
+    [data-testid="stHeader"] {
+        background-color: #0e1117;
+        height: 0px;
+    }
+    .logo-container {
+        display: flex;
+        justify-content: center;
+        background-color: #0e1117;
+        padding: 10px 0px; 
+    }
+    h1 {
+        margin-top: -15px !important;
+        text-align: center;
+    }
+    /* Custom Footer Styling */
+    .footer {
+        position: fixed;
+        left: 0;
+        bottom: 0;
+        width: 100%;
+        background-color: #0e1117;
+        color: #666;
+        text-align: center;
+        padding: 15px;
+        font-size: 11px;
+        border-top: 1px solid #333;
+        z-index: 999;
+        letter-spacing: 0.5px;
+    }
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     </style>
     """, unsafe_allow_html=True)
 
+# Centered Logo
 st.markdown('<div class="logo-container">', unsafe_allow_html=True)
 st.image("VP Logo Horizontal Transparent White Lettering.png", width=250)
 st.markdown('</div>', unsafe_allow_html=True)
@@ -46,21 +76,21 @@ STORAGE_TYPES = {
     "HD": 2.275, "DT - Pallet": 2.2074
 }
 
-# --- 4. IMPROVED TAG FETCHING WITH PROGRESS ---
+# --- 4. OPTIMIZED TAG FETCHING WITH PROGRESS BAR ---
 def fetch_all_tags():
     all_tags = set()
     cursor = None
     has_next = True
     
-    # UI Progress components
+    # Visible Progress in Sidebar
     progress_text = st.sidebar.empty()
     progress_bar = st.sidebar.progress(0)
     
     page_count = 0
     while has_next:
         page_count += 1
-        progress_text.text(f"Scanning Catalog (Page {page_count})...")
-        progress_bar.progress(min(page_count * 5, 100)) # Simple visual increment
+        progress_text.text(f"Fetching Tags (Page {page_count})...")
+        progress_bar.progress(min(page_count * 10, 100)) # Increment visual bar
         
         cursor_arg = f', after: "{cursor}"' if cursor else ""
         query = f"query {{ products {{ data(first: 500{cursor_arg}) {{ pageInfo {{ hasNextPage endCursor }} edges {{ node {{ tags }} }} }} }} }}"
@@ -93,7 +123,7 @@ def fetch_all_tags():
     progress_bar.empty()
     return sorted(list(all_tags))
 
-# --- 5. TARGETED DATA FETCHING ---
+# --- 5. TARGETED DATA FETCHING (AFTER TAG SELECTION) ---
 @st.cache_data(ttl=300)
 def fetch_report_data(selected_tags):
     report_data = []
@@ -124,6 +154,7 @@ def fetch_report_data(selected_tags):
             r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS, timeout=20)
             res = r.json()
             
+            # Handle Credit Limit Retry
             if 'errors' in res and "credits" in res['errors'][0].get('message', ''):
                 time.sleep(5)
                 continue
@@ -137,12 +168,10 @@ def fetch_report_data(selected_tags):
 
 # --- 6. UI FLOW ---
 st.sidebar.header("1. Data Initialization")
-
-# We call the tag fetcher. It now manages its own progress bar in the sidebar.
 tags_list = fetch_all_tags()
 
 if not tags_list:
-    st.sidebar.warning("No tags found. Check API Token.")
+    st.sidebar.warning("No tags found. Please check your API Token.")
     selected_tags = []
 else:
     selected_tags = st.sidebar.multiselect("Select Product Tags", options=tags_list)
@@ -154,7 +183,7 @@ date_range = st.sidebar.date_input("Select Range", value=(today.replace(day=1), 
 
 if not selected_tags:
     st.title("📦 Storage Report")
-    st.info("👈 Please select one or more tags in the sidebar to start.")
+    st.info("👈 Please select one or more Product Tags in the sidebar to generate your report.")
     st.stop()
 
 if isinstance(date_range, tuple) and len(date_range) == 2:
@@ -163,8 +192,8 @@ if isinstance(date_range, tuple) and len(date_range) == 2:
 else:
     num_days = 1
 
-# Heavy fetch happens here
-with st.spinner(f"Pulling location data for: {', '.join(selected_tags)}..."):
+# Only run heavy fetch after tags are selected
+with st.spinner(f"Fetching inventory for: {', '.join(selected_tags)}..."):
     raw_edges = fetch_report_data(selected_tags)
 
 # --- 7. PROCESSING & DISPLAY ---
@@ -188,6 +217,7 @@ for edge in raw_edges:
             l_type = loc_type_map.get(l_name, "Unknown")
             daily_rate = STORAGE_TYPES.get(l_type, 0.0)
             
+            # Logic: 0 Qty = 0 Cost
             cost = (daily_rate * num_days) if qty > 0 else 0.0
             
             report_list.append({
@@ -208,16 +238,23 @@ if report_list:
     c1.metric("Total Period Cost", f"${df['Period Cost'].sum():,.2f}")
     c2.metric("Days Counted", f"{num_days} Days")
 
+    # Sidebar Summary
     st.sidebar.subheader("Cost Breakdown")
     summary = df.groupby("Storage Type").agg(Qty=('Location', 'count'), Cost=('Period Cost', 'sum')).reset_index()
     st.sidebar.dataframe(summary, hide_index=True, column_config={"Cost": st.column_config.NumberColumn(format="$%.2f")})
 
+    # Main Data Table
     st.dataframe(df, use_container_width=True, hide_index=True, column_config={
         "Daily Rate": st.column_config.NumberColumn(format="$%.4f"),
         "Period Cost": st.column_config.NumberColumn(format="$%.2f")
     })
-    st.download_button("Download CSV", df.to_csv(index=False), "report.csv", "text/csv")
+    st.download_button("Download CSV Report", df.to_csv(index=False), "snow_report.csv", "text/csv")
 else:
     st.warning("No inventory found for the selected tags.")
 
-st.markdown(f'<div class="footer">Vertical Passage Warehouse Operations | Revision: March 17, 2026</div>', unsafe_allow_html=True)
+# --- 8. FOOTER WITH ITERATION ---
+st.markdown(f"""
+    <div class="footer">
+        Vertical Passage Warehouse Operations | Iteration: 2.1 | Revision: {date.today().strftime('%B %d, %Y')}
+    </div>
+    """, unsafe_allow_html=True)
