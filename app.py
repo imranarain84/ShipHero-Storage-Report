@@ -25,9 +25,15 @@ st.markdown("""
         background-color: #0e1117; 
         padding: 10px 0px; 
     }
-    h1 { 
-        margin-top: -15px !important; 
-        text-align: center; 
+    .report-header {
+        text-align: center;
+        margin-bottom: 0px;
+    }
+    .client-logo-container {
+        display: flex;
+        justify-content: center;
+        padding-top: 10px;
+        padding-bottom: 20px;
     }
     
     /* Centering the Generate Button in the Sidebar */
@@ -37,7 +43,7 @@ st.markdown("""
         width: 100%;
     }
 
-    /* Minimal Professional Footer - Matching Screenshot Style */
+    /* Minimal Professional Footer */
     .vp-footer {
         position: fixed;
         left: 0;
@@ -56,6 +62,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
+# Main VP Branding
 st.markdown('<div class="logo-container">', unsafe_allow_html=True)
 st.image("VP Logo Horizontal Transparent White Lettering.png", width=250)
 st.markdown('</div>', unsafe_allow_html=True)
@@ -80,7 +87,7 @@ STORAGE_TYPES = {
     "HD": 2.275, "DT - Pallet": 2.2074
 }
 
-# --- 4. CSV LOADING ---
+# --- 4. DATA UTILITIES ---
 @st.cache_data
 def load_csv_data():
     if not os.path.exists(CSV_FILE):
@@ -101,7 +108,6 @@ def get_loc_map():
         return dict(zip(df['Location'], df['Type']))
     except: return {}
 
-# --- 5. TARGETED FETCH BY SKU ---
 def fetch_inventory_for_skus(sku_list):
     all_results = []
     for i in range(0, len(sku_list), 50):
@@ -120,25 +126,30 @@ def fetch_inventory_for_skus(sku_list):
         except: continue
     return all_results
 
-# --- 6. UI FLOW & SIDEBAR ---
+# --- 5. UI FLOW & SIDEBAR ---
 available_tags, tag_map = load_csv_data()
 
 if available_tags is None:
     st.sidebar.warning(f"⚠️ {CSV_FILE} not found!")
     st.stop()
 
-# Updated Sidebar Labels per request
+# Clean Sidebar Labels
 selected_tag = st.sidebar.selectbox("Select Product Tag", options=[""] + available_tags)
 
 today = date.today()
 date_range = st.sidebar.date_input("Select Date Range", value=(today.replace(day=1), today), format="MM/DD/YYYY")
 
-st.sidebar.markdown("<br>", unsafe_allow_html=True) # Spacer
+st.sidebar.markdown("<br>", unsafe_allow_html=True)
 generate_btn = st.sidebar.button("Generate Report")
 
+# --- 6. MAIN DASHBOARD RENDER ---
 if not selected_tag:
-    st.title("📦 SKU-Targeted Storage Report")
-    st.info("👈 Use the sidebar to select a product tag and date range.")
+    st.markdown("<h1 class='report-header'>Storage Report</h1>", unsafe_allow_html=True)
+    st.markdown('<div class="client-logo-container">', unsafe_allow_html=True)
+    st.image("snow-logo.png", width=240) # 2.5 inches approx
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    st.info("👈 Use the sidebar to select a product tag and date range to begin.")
     st.stop()
 
 if generate_btn:
@@ -167,7 +178,13 @@ if generate_btn:
 
     if report_list:
         df = pd.DataFrame(report_list)
-        st.title(f"📦 {selected_tag} Storage Report")
+        
+        # Result Header
+        st.markdown("<h1 class='report-header'>Storage Report</h1>", unsafe_allow_html=True)
+        st.markdown('<div class="client-logo-container">', unsafe_allow_html=True)
+        st.image("snow-logo.png", width=240)
+        st.markdown('</div>', unsafe_allow_html=True)
+
         c1, c2 = st.columns(2)
         c1.metric("Total Period Cost", f"${df['Period Cost'].sum():,.2f}")
         c2.metric("Days Counted", f"{num_days} Days")
@@ -181,9 +198,9 @@ if generate_btn:
     else:
         st.warning("No inventory found for the selected criteria.")
 
-# --- 7. REFORMATTED FOOTER (MATCHING SCREENSHOT) ---
+# --- 7. FOOTER (MATCHING INVOICE STYLE) ---
 st.markdown(f"""
     <div class="vp-footer">
-        v4.4 | Vertical Passage Operations
+        v4.5 | Vertical Passage Operations
     </div>
     """, unsafe_allow_html=True)
