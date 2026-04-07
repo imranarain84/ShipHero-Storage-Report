@@ -59,7 +59,7 @@ def load_csv_data():
     try:
         df = pd.read_csv(CSV_FILE)
         df.columns = df.columns.str.strip().str.lower()
-        unique_tags = sorted(df['tag'].dropna().unique().tolist())
+        unique_tags = sorted(df['tag'].dropna().astype(str).unique().tolist())
         tag_to_skus = df.groupby('tag')['sku'].apply(list).to_dict()
         return unique_tags, tag_to_skus
     except: return None, None
@@ -71,10 +71,10 @@ def get_loc_map():
         return dict(zip(df['Location'], df['Type']))
     except: return {}
 
-# --- 5. COMMA-SENSITIVE FETCH ENGINE (Iteration 5.1) ---
-def fetch_inventory_comma_match(sku_list, selected_tags):
+# --- 5. DIAGNOSTIC FETCH ENGINE ---
+def fetch_inventory_diagnostic(sku_list, selected_tags):
     final_results = []
-    # Normalize selected tags
+    debug_raw = [] # To capture what the API actually says
     normalized_selections = [str(t).lower().strip() for t in selected_tags]
     
     for i in range(0, len(sku_list), 30):
@@ -110,21 +110,23 @@ def fetch_inventory_comma_match(sku_list, selected_tags):
             
             for edge in edges:
                 node = edge['node']
-                # Join all tags into one lowercase string to handle comma separations
                 raw_tags_list = node.get('tags', [])
-                full_tag_string = ",".join([str(t).lower().strip() for t in raw_tags_list])
-                
-                # If any selected tag exists as a whole word in the full tag string
-                # We split by comma to ensure we aren't matching partial words (e.g. 'AMC' matching 'AMCORP')
-                individual_tags = [t.strip() for t in full_tag_string.split(',')]
-                
+                # Record for debugging
+                debug_raw.append({
+                    "SKU": node.get('sku'),
+                    "Tags Found": ", ".join(raw_tags_list) if raw_tags_list else "NONE",
+                    "Has Locations?": "Yes" if node.get('warehouse_products') else "No"
+                })
+
+                # Matching Logic
+                individual_tags = [str(t).lower().strip() for t in raw_tags_list]
                 if any(sel in individual_tags for sel in normalized_selections):
                     final_results.append(edge)
             
             time.sleep(0.4)
         except: continue
         
-    return final_results
+    return final_results, debug_raw
 
 # --- 6. UI SIDEBAR ---
 available_tags, tag_map = load_csv_data()
@@ -133,14 +135,9 @@ if available_tags is None:
     st.sidebar.warning(f"⚠️ {CSV_FILE} not found!")
     st.stop()
 
-selected_tags = st.sidebar.multiselect(
-    "Select Product Tag (Select all that apply)", 
-    options=available_tags
-)
-
+selected_tags = st.sidebar.multiselect("Select Product Tag (Select all that apply)", options=available_tags)
 today = date.today()
 date_range = st.sidebar.date_input("Select Date Range", value=(today.replace(day=1), today), format="MM/DD/YYYY")
-
 st.sidebar.markdown("<br>", unsafe_allow_html=True)
 generate_btn = st.sidebar.button("Generate Report")
 
@@ -155,8 +152,8 @@ else:
         for tag in selected_tags: sku_pool.extend(tag_map.get(tag, []))
         sku_pool = list(set(sku_pool))
         
-        with st.spinner(f"Pulling data for {len(sku_pool)} SKUs..."):
-            raw_edges = fetch_inventory_comma_match(sku_pool, selected_tags)
+        with st.spinner(f"Querying ShipHero for {len(sku_pool)} SKUs..."):
+            raw_edges, debug_list = fetch_inventory_diagnostic(sku_pool, selected_tags)
             
         loc_type_map = get_loc_map()
         report_list = []
@@ -178,8 +175,7 @@ else:
 
         if report_list:
             df = pd.DataFrame(report_list)
-            st.success(f"Successfully processed {len(df['SKU'].unique())} unique SKUs.")
-            
+            st.success(f"Matched {len(df['SKU'].unique())} SKUs with the selected tag(s).")
             c1, c2 = st.columns(2)
             c1.metric("Total Period Cost", f"${df['Period Cost'].sum():,.2f}")
             c2.metric("Days Counted", f"{num_days} Days")
@@ -187,16 +183,16 @@ else:
             st.sidebar.subheader("Cost Breakdown")
             summary = df.groupby("Storage Type").agg(Qty=('Location', 'count'), Cost=('Period Cost', 'sum')).reset_index()
             st.sidebar.dataframe(summary, hide_index=True)
-
             st.dataframe(df, use_container_width=True, hide_index=True)
             st.download_button("Download CSV Report", df.to_csv(index=False), "report.csv")
         else:
             st.error("❌ No inventory found. Verification failed.")
-            st.write("Double-check that the tag names in your CSV exactly match the individual words between commas in ShipHero.")
+            with st.expander("🔍 View Debug Information (What ShipHero returned)"):
+                if debug_list:
+                    st.write("The following SKUs were checked but did not match your tag selection OR have no inventory locations in ShipHero:")
+                    st.table(pd.DataFrame(debug_list))
+                else:
+                    st.write("ShipHero returned zero products for the SKUs provided. Ensure the SKUs in your CSV exactly match the SKU field in ShipHero.")
 
 # --- 8. FOOTER ---
-st.markdown(f"""
-    <div class="vp-footer">
-        v5.1 | Vertical Passage Operations
-    </div>
-    """, unsafe_allow_html=True)
+st.markdown(f'<div class="vp-footer">v5.2 | Vertical Passage Operations</div>', unsafe_allow_html=True)
