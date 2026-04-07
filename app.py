@@ -46,34 +46,56 @@ STORAGE_TYPES = {
     "HD": 2.275, "DT - Pallet": 2.2074
 }
 
-# --- 4. LIGHTWEIGHT TAG FETCHING ---
-@st.cache_data(ttl=3600)
+# --- 4. IMPROVED TAG FETCHING WITH PROGRESS ---
 def fetch_all_tags():
-    """Only fetches product tags to keep it fast."""
     all_tags = set()
     cursor = None
     has_next = True
     
+    # UI Progress components
+    progress_text = st.sidebar.empty()
+    progress_bar = st.sidebar.progress(0)
+    
+    page_count = 0
     while has_next:
+        page_count += 1
+        progress_text.text(f"Scanning Catalog (Page {page_count})...")
+        progress_bar.progress(min(page_count * 5, 100)) # Simple visual increment
+        
         cursor_arg = f', after: "{cursor}"' if cursor else ""
-        query = f"query {{ products {{ data(first: 250{cursor_arg}) {{ pageInfo {{ hasNextPage endCursor }} edges {{ node {{ tags }} }} }} }} }}"
+        query = f"query {{ products {{ data(first: 500{cursor_arg}) {{ pageInfo {{ hasNextPage endCursor }} edges {{ node {{ tags }} }} }} }} }}"
+        
         try:
-            r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS, timeout=15)
+            r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS, timeout=20)
             res = r.json()
+            
+            if 'errors' in res:
+                st.sidebar.error(f"API Error: {res['errors'][0]['message']}")
+                break
+                
             data = res.get('data', {}).get('products', {}).get('data', {})
-            for edge in data.get('edges', []):
+            edges = data.get('edges', [])
+            
+            if not edges: break
+            
+            for edge in edges:
                 for tag in edge['node'].get('tags', []):
                     if tag: all_tags.add(tag)
+            
             has_next = data.get('pageInfo', {}).get('hasNextPage', False)
             cursor = data.get('pageInfo', {}).get('endCursor')
-        except:
+            
+        except Exception as e:
+            st.sidebar.error(f"Connection Failed: {e}")
             break
+            
+    progress_text.empty()
+    progress_bar.empty()
     return sorted(list(all_tags))
 
 # --- 5. TARGETED DATA FETCHING ---
 @st.cache_data(ttl=300)
 def fetch_report_data(selected_tags):
-    """Fetches full inventory details ONLY for selected tags."""
     report_data = []
     for tag in selected_tags:
         cursor = None
@@ -102,7 +124,6 @@ def fetch_report_data(selected_tags):
             r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS, timeout=20)
             res = r.json()
             
-            # Handle Credit Limit Retry
             if 'errors' in res and "credits" in res['errors'][0].get('message', ''):
                 time.sleep(5)
                 continue
@@ -115,11 +136,16 @@ def fetch_report_data(selected_tags):
     return report_data
 
 # --- 6. UI FLOW ---
-st.sidebar.header("1. Initial Setup")
-with st.spinner("Loading product tags..."):
-    tags_list = fetch_all_tags()
+st.sidebar.header("1. Data Initialization")
 
-selected_tags = st.sidebar.multiselect("Select Product Tags", options=tags_list)
+# We call the tag fetcher. It now manages its own progress bar in the sidebar.
+tags_list = fetch_all_tags()
+
+if not tags_list:
+    st.sidebar.warning("No tags found. Check API Token.")
+    selected_tags = []
+else:
+    selected_tags = st.sidebar.multiselect("Select Product Tags", options=tags_list)
 
 st.sidebar.markdown("---")
 st.sidebar.header("2. Date Range")
@@ -128,17 +154,17 @@ date_range = st.sidebar.date_input("Select Range", value=(today.replace(day=1), 
 
 if not selected_tags:
     st.title("📦 Storage Report")
-    st.info("Please select at least one Product Tag in the sidebar to generate the report.")
+    st.info("👈 Please select one or more tags in the sidebar to start.")
     st.stop()
 
-# Start the heavy lifting only after tags are chosen
 if isinstance(date_range, tuple) and len(date_range) == 2:
     start_date, end_date = date_range
     num_days = (end_date - start_date).days + 1
 else:
     num_days = 1
 
-with st.spinner(f"Generating report for {len(selected_tags)} tag(s)..."):
+# Heavy fetch happens here
+with st.spinner(f"Pulling location data for: {', '.join(selected_tags)}..."):
     raw_edges = fetch_report_data(selected_tags)
 
 # --- 7. PROCESSING & DISPLAY ---
@@ -171,8 +197,7 @@ for edge in raw_edges:
                 "Storage Type": l_type,
                 "Inv Qty": qty,
                 "Daily Rate": daily_rate,
-                "Period Cost": round(cost, 2),
-                "Tags": ", ".join(node.get('tags', []))
+                "Period Cost": round(cost, 2)
             })
 
 if report_list:
@@ -183,12 +208,10 @@ if report_list:
     c1.metric("Total Period Cost", f"${df['Period Cost'].sum():,.2f}")
     c2.metric("Days Counted", f"{num_days} Days")
 
-    # Sidebar Summary
     st.sidebar.subheader("Cost Breakdown")
     summary = df.groupby("Storage Type").agg(Qty=('Location', 'count'), Cost=('Period Cost', 'sum')).reset_index()
     st.sidebar.dataframe(summary, hide_index=True, column_config={"Cost": st.column_config.NumberColumn(format="$%.2f")})
 
-    # Main Table
     st.dataframe(df, use_container_width=True, hide_index=True, column_config={
         "Daily Rate": st.column_config.NumberColumn(format="$%.4f"),
         "Period Cost": st.column_config.NumberColumn(format="$%.2f")
