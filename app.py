@@ -11,42 +11,55 @@ st.set_page_config(page_title="VP Storage Report", page_icon="VP Warehouse Icon 
 
 st.markdown("""
     <style>
+    /* Reset and Base Spacing */
     .block-container { 
-        padding-top: 1rem; 
+        padding-top: 2rem; 
         padding-bottom: 10rem; 
     }
-    [data-testid="stHeader"] { 
-        background-color: #0e1117; 
-        height: 0px; 
-    }
     
-    /* THE FIX: Ensuring logos aren't clipped */
-    .logo-header-container {
+    /* Header Container - Flexible Layout */
+    .brand-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
         width: 100%;
-        padding: 10px 20px;
+        margin-bottom: 30px;
+        padding: 10px 0;
     }
 
-    .logo-img {
-        max-height: 80px; /* Limits height to prevent clipping */
-        width: auto;
-        object-fit: contain;
+    /* Logo Sizing to prevent cut-off */
+    .logo-left {
+        max-width: 220px;
+        height: auto;
+    }
+    
+    .logo-right {
+        max-width: 220px;
+        height: auto;
+        margin-left: auto;
     }
 
-    .report-title-centered {
-        flex-grow: 1;
+    .title-centered {
         text-align: center;
+        flex-grow: 1;
         color: white;
         font-size: 32px;
         font-weight: bold;
-        margin: 0;
+        margin: 0 20px;
+        line-height: 1.2;
     }
 
+    /* Sidebar Logo Adjustment */
+    .sidebar-logo-container { 
+        display: flex; 
+        justify-content: center; 
+        padding-bottom: 20px; 
+        border-bottom: 1px solid #30363d;
+        margin-bottom: 20px;
+    }
+
+    /* Button and Footer */
     div.stButton > button { 
-        display: block; 
-        margin: 0 auto; 
         width: 100%; 
         background-color: #161b22; 
         color: white; 
@@ -69,18 +82,27 @@ st.markdown("""
     
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    
-    .sidebar-logo-container { 
-        display: flex; 
-        justify-content: center; 
-        padding-bottom: 20px; 
-        border-bottom: 1px solid #30363d;
-        margin-bottom: 20px;
-    }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. API & DATA CONFIGURATION ---
+# --- 2. THE BRAND HEADER (Iteration 6.9 Fix) ---
+# We use st.columns with specific ratios to prevent the "squish" seen in the screenshot
+c1, c2, c3 = st.columns([1, 2, 1])
+
+with c1:
+    # Snow Logo on Top Left as requested
+    st.image("snow-logo.png", width=220)
+
+with c2:
+    st.markdown("<h1 style='text-align: center; color: white; margin-top: 15px;'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
+
+with c3:
+    # Right column stays empty for balance, VP is in sidebar
+    st.write("")
+
+st.markdown("---")
+
+# --- 3. API & DATA CONFIGURATION ---
 token = st.secrets.get("SHIPHERO_TOKEN_SNOW")
 SHIPHERO_API_URL = "https://public-api.shiphero.com/graphql"
 HEADERS = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -122,7 +144,7 @@ def get_loc_map():
         return dict(zip(df['Location'].str.strip(), df['Type'].str.strip()))
     except: return {}
 
-# --- 3. STABLE BATCH FETCH ENGINE ---
+# --- 4. DATA ENGINE ---
 def fetch_inventory_stable(sku_list, selected_tags):
     final_results = []
     normalized_selections = [str(t).lower().strip() for t in selected_tags]
@@ -162,23 +184,8 @@ def fetch_inventory_stable(sku_list, selected_tags):
     progress_bar.empty()
     return final_results
 
-# --- 4. HEADER LAYOUT (Revised for visibility) ---
+# --- 5. UI SIDEBAR ---
 available_tags, tag_map = load_csv_data()
-h_col1, h_col2, h_col3 = st.columns([1, 2, 1])
-
-with h_col1:
-    # Adding padding and contain to prevent cutoff
-    st.image("snow-logo.png", width=220, use_container_width=False)
-
-with h_col2:
-    st.markdown("<h1 style='text-align: center; color: white; padding-top: 15px; margin:0;'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
-
-with h_col3:
-    st.write("") # Spacer
-
-st.markdown("---")
-
-# --- 5. SIDEBAR ---
 with st.sidebar:
     st.markdown('<div class="sidebar-logo-container">', unsafe_allow_html=True)
     st.image("VP Logo Horizontal Transparent White Lettering.png", width=220)
@@ -231,4 +238,5 @@ else:
         else:
             st.error("❌ No matching inventory found.")
 
-st.markdown(f'<div class="vp-footer">v6.8 | Vertical Passage Operations</div>', unsafe_allow_html=True)
+# --- 7. FOOTER ---
+st.markdown(f'<div class="vp-footer">v6.9 | Vertical Passage Operations</div>', unsafe_allow_html=True)
