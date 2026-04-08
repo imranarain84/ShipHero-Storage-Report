@@ -12,24 +12,25 @@ st.set_page_config(page_title="VP Storage Report", page_icon="VP Warehouse Icon 
 st.markdown("""
     <style>
     .block-container { 
-        padding-top: 2rem !important; 
+        padding-top: 1rem !important; 
         padding-bottom: 10rem; 
     }
     
-    /* Brute-force centering for the Header Group */
+    /* Center Grouping for the Header text */
     .header-box {
         text-align: center;
         width: 100%;
-        margin-bottom: 20px;
+        margin-bottom: 5px; /* Tight margin before logo */
     }
 
     .main-title-text { 
         color: white; 
         font-size: 42px; 
         font-weight: bold; 
-        margin-bottom: 5px;
+        margin: 0;
     }
     
+    /* Sidebar Branding Area */
     .sidebar-branding {
         text-align: center;
         padding-bottom: 20px;
@@ -37,6 +38,7 @@ st.markdown("""
         margin-bottom: 20px;
     }
     
+    /* Button and Footer styling */
     div.stButton > button { 
         width: 100%; 
         background-color: #161b22; 
@@ -61,17 +63,21 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. THE BRAND HEADER (Vertical Stack) ---
+# --- 2. THE BRAND HEADER (Centered Stack) ---
+# Title first, inside a centered div
 st.markdown("<div class='header-box'><h1 class='main-title-text'>Warehouse Storage Cost Report</h1></div>", unsafe_allow_html=True)
 
-# Snow Logo Centered Directly Below Title
-_, logo_center, _ = st.columns([1, 1, 1])
-with logo_center:
-    st.image("snow-logo.png", width=250)
+# THE FIX: Create symmetrical columns to force the logo to the exact center
+# Using [1.5, 1, 1.5] ensures the middle column is perfectly centered on wide screens
+col_spacer_l, col_logo_center, col_spacer_r = st.columns([1.5, 1, 1.5])
+
+with col_logo_center:
+    # use_container_width=True makes the logo fill its centered column perfectly
+    st.image("snow-logo.png", width=250, use_container_width=True)
 
 st.markdown("<hr style='border: 1px solid #30363d; margin-top: 10px; margin-bottom: 30px;'>", unsafe_allow_html=True)
 
-# --- 3. API & DATA CONFIG ---
+# --- 3. API & DATA CONFIGURATION (v7.9 Batching) ---
 token = st.secrets.get("SHIPHERO_TOKEN_SNOW")
 SHIPHERO_API_URL = "https://public-api.shiphero.com/graphql"
 HEADERS = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -112,7 +118,7 @@ def get_loc_map():
         return dict(zip(df['Location'].str.strip(), df['Type'].str.strip()))
     except: return {}
 
-# --- 4. DATA ENGINE (Optimized Aliasing) ---
+# --- 4. HIGH-SPEED ALIAS ENGINE ---
 def fetch_inventory_optimized(sku_list, selected_tags):
     final_results = []
     normalized_selections = [str(t).lower().strip() for t in selected_tags]
@@ -120,6 +126,7 @@ def fetch_inventory_optimized(sku_list, selected_tags):
     progress_bar = st.progress(0)
     total_skus = len(sku_list)
     
+    # We send batches of 10 using GraphQL Aliases for stability and speed
     batch_size = 10
     for i in range(0, total_skus, batch_size):
         batch = sku_list[i : i + batch_size]
@@ -128,22 +135,36 @@ def fetch_inventory_optimized(sku_list, selected_tags):
         
         queries = ""
         for idx, sku in enumerate(batch):
+            # We use 'sku_X' as an alias so the API treats them as separate calls in one go
             queries += f'sku_{idx}: product(sku: "{sku.strip()}") {{ data {{ sku name tags warehouse_products {{ warehouse_id on_hand locations(first: 50) {{ edges {{ node {{ quantity location {{ name }} }} }} }} }} }} }} '
 
         full_query = f"query {{ {queries} }}"
+        
         try:
             r = requests.post(SHIPHERO_API_URL, json={'query': full_query}, headers=HEADERS, timeout=60)
-            data_map = r.json().get('data', {})
+            res = r.json()
+            
+            # Rate limit protection
+            if 'errors' in res and "credits" in res['errors'][0].get('message', '').lower():
+                time.sleep(12)
+                r = requests.post(SHIPHERO_API_URL, json={'query': full_query}, headers=HEADERS)
+                res = r.json()
+            
+            data_map = res.get('data', {})
             for alias_key in data_map:
                 if data_map[alias_key] and data_map[alias_key].get('data'):
                     final_results.append(data_map[alias_key]['data'])
-            time.sleep(0.3)
-        except: continue
             
-    progress_text.empty(); progress_bar.empty()
+            # Short throttle to stay under credit burst limits
+            time.sleep(0.3)
+        except:
+            continue
+            
+    progress_text.empty()
+    progress_bar.empty()
     return final_results
 
-# --- 5. SIDEBAR (VP Logo + Controls) ---
+# --- 5. SIDEBAR ---
 with st.sidebar:
     st.markdown('<div class="sidebar-branding">', unsafe_allow_html=True)
     st.image("VP Logo Horizontal Transparent White Lettering.png", width=220)
@@ -153,7 +174,7 @@ with st.sidebar:
     available_tags, tag_map = load_csv_data()
     selected_tags = st.multiselect("Select Product Tag", options=available_tags if available_tags else [])
     
-    # FORMAT: MM/DD/YYYY
+    # format locked to MM/DD/YYYY
     date_range = st.date_input("Select Date Range", value=(date.today().replace(day=1), date.today()), format="MM/DD/YYYY")
     generate_btn = st.button("Generate Report")
 
@@ -167,6 +188,7 @@ else:
         for tag in selected_tags: sku_pool.extend(tag_map.get(tag, []))
         sku_pool = list(set(sku_pool))
         
+        # Using the High-Speed engine that worked for Universal Parks
         verified_products = fetch_inventory_optimized(sku_pool, selected_tags)
         loc_type_map = get_loc_map()
         report_list = []
@@ -188,7 +210,7 @@ else:
                             "Storage Type": l_type, "Inv Qty": qty, "Daily Rate": rate, "Period Cost": round(cost, 2)
                         })
             
-            # Catching SKUs with no active bins
+            # Special inclusive logic for SKUs without active bin locations
             if not found_locations:
                 report_list.append({
                     "Product Name": node.get('name'), "SKU": node.get('sku'), "Location": "No Bin Found",
@@ -197,14 +219,14 @@ else:
 
         if report_list:
             df = pd.DataFrame(report_list)
-            st.success(f"Report Generated: {len(df['SKU'].unique())} unique SKUs verified.")
+            st.success(f"Verified {len(df['SKU'].unique())} unique SKUs found with inventory.")
             c1, c2 = st.columns(2)
             c1.metric("Total Period Cost", f"${df['Period Cost'].sum():,.2f}")
             c2.metric("Days Counted", f"{num_days} Days")
             st.dataframe(df, use_container_width=True, hide_index=True)
             st.download_button("Download CSV", df.to_csv(index=False), "report.csv")
         else:
-            st.error("❌ No inventory records found.")
+            st.error("❌ No matching inventory found in ShipHero.")
 
 # --- 7. FOOTER ---
-st.markdown(f'<div class="vp-footer">v7.9 | Vertical Passage Operations</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="vp-footer">v7.9.1 | Vertical Passage Operations</div>', unsafe_allow_html=True)
