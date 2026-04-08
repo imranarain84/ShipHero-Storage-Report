@@ -11,92 +11,18 @@ st.set_page_config(page_title="VP Storage Report", page_icon="VP Warehouse Icon 
 
 st.markdown("""
     <style>
-    .block-container { 
-        padding-top: 6rem; /* Extra padding to make room for the fixed header */
-        padding-bottom: 10rem; 
-    }
-    [data-testid="stHeader"] { 
-        background-color: #0e1117; 
-        height: 0px; 
-    }
-    
-    /* THE FIX: Fixed Top Header for Logos */
-    .custom-header {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: 100px;
-        background-color: #0e1117;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 0 40px;
-        z-index: 1000;
-        border-bottom: 1px solid #30363d;
-    }
-
-    .header-logo {
-        max-height: 60px;
-        width: auto;
-        object-fit: contain;
-    }
-
-    .report-title {
-        color: white;
-        font-size: 28px;
-        font-weight: bold;
-        text-align: center;
-        margin: 0;
-        flex-grow: 1;
-    }
-
-    /* Footer logic */
-    .vp-footer {
-        position: fixed;
-        left: 0;
-        bottom: 0;
-        width: 100%;
-        background-color: #0e1117;
-        color: #555e67;
-        text-align: center;
-        padding: 15px 0px;
-        font-size: 13px;
-        border-top: 1px solid #30363d;
-        z-index: 999999;
-    }
-    
+    .block-container { padding-top: 1rem; padding-bottom: 10rem; }
+    [data-testid="stHeader"] { background-color: #0e1117; height: 0px; }
+    .report-title-container { flex-grow: 2; text-align: center; }
+    div.stButton > button { display: block; margin: 0 auto; width: 100%; background-color: #161b22; color: white; border: 1px solid #30363d; }
+    .vp-footer { position: fixed; left: 0; bottom: 0; width: 100%; background-color: #0e1117; color: #555e67; text-align: center; padding: 15px 0px; font-size: 13px; border-top: 1px solid #30363d; z-index: 999999; }
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-
-    /* Sidebar button styling */
-    div.stButton > button { 
-        width: 100%; 
-        background-color: #161b22; 
-        color: white; 
-        border: 1px solid #30363d; 
-    }
+    .sidebar-logo-container { display: flex; justify-content: center; padding-bottom: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. THE HEADER (Manual HTML for perfect alignment) ---
-# Note: Streamlit doesn't always serve local files via HTML tags easily. 
-# We use standard columns here but with "container" protection to prevent cropping.
-
-t_col1, t_col2, t_col3 = st.columns([1, 2, 1])
-
-with t_col1:
-    st.image("VP Logo Horizontal Transparent White Lettering.png", width=220)
-
-with t_col2:
-    st.markdown("<h1 style='text-align: center; color: white; padding-top: 10px;'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
-
-with t_col3:
-    st.image("snow-logo.png", width=220)
-
-st.markdown("---")
-
-# --- 3. API & DATA CONFIGURATION ---
+# --- 2. API & DATA CONFIGURATION ---
 token = st.secrets.get("SHIPHERO_TOKEN_SNOW")
 SHIPHERO_API_URL = "https://public-api.shiphero.com/graphql"
 HEADERS = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -138,45 +64,71 @@ def get_loc_map():
         return dict(zip(df['Location'].str.strip(), df['Type'].str.strip()))
     except: return {}
 
-def fetch_inventory_with_percentage(sku_list, selected_tags):
+# --- 3. STABLE BATCH FETCH ENGINE ---
+def fetch_inventory_stable(sku_list, selected_tags):
     final_results = []
     normalized_selections = [str(t).lower().strip() for t in selected_tags]
+    
     progress_text = st.empty()
     progress_bar = st.progress(0)
     total_skus = len(sku_list)
     
-    for idx, sku in enumerate(sku_list):
-        current_percent = int(((idx + 1) / total_skus) * 100)
+    # Process 5 at a time to balance speed and ShipHero stability
+    batch_size = 5
+    for i in range(0, total_skus, batch_size):
+        batch = sku_list[i : i + batch_size]
+        current_percent = int((i / total_skus) * 100)
         progress_text.markdown(f"**Loading... {current_percent}%**")
-        progress_bar.progress((idx + 1) / total_skus)
+        progress_bar.progress(i / total_skus)
         
-        query = f'query {{ product(sku: "{sku.strip()}") {{ data {{ sku name tags warehouse_products {{ warehouse_id locations(first: 50) {{ edges {{ node {{ quantity location {{ name }} }} }} }} }} }} }} }}'
+        # Build individual fragments for the batch
+        fragments = ""
+        for idx, sku in enumerate(batch):
+            fragments += f'sku_{idx}: product(sku: "{sku.strip()}") {{ data {{ sku name tags warehouse_products {{ warehouse_id locations(first: 50) {{ edges {{ node {{ quantity location {{ name }} }} }} }} }} }} }} '
+
+        query = f"query {{ {fragments} }}"
+        
         try:
-            r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS, timeout=15)
+            r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS, timeout=60)
             res = r.json()
+            
+            # Handle credit limits
             if 'errors' in res and "credits" in res['errors'][0].get('message', '').lower():
-                time.sleep(10); r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS); res = r.json()
-            product_data = res.get('data', {}).get('product', {}).get('data')
-            if product_data:
-                ship_tags = [str(t).lower().strip() for t in product_data.get('tags', [])]
-                if any(sel in ship_tags for sel in normalized_selections):
-                    final_results.append(product_data)
-            time.sleep(0.2)
-        except: continue
-    progress_text.empty(); progress_bar.empty()
+                time.sleep(15)
+                r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS)
+                res = r.json()
+            
+            data = res.get('data', {})
+            for key in data:
+                product_data = data[key].get('data')
+                if product_data:
+                    ship_tags = [str(t).lower().strip() for t in product_data.get('tags', [])]
+                    if any(sel in ship_tags for sel in normalized_selections):
+                        final_results.append(product_data)
+            
+            time.sleep(0.4)
+        except Exception as e:
+            continue
+            
+    progress_text.empty()
+    progress_bar.empty()
     return final_results
 
-# --- 4. INITIALIZE DATA ---
+# --- 4. HEADER LAYOUT ---
 available_tags, tag_map = load_csv_data()
+h_col1, h_col2, h_col3 = st.columns([1, 2, 1])
+with h_col1: st.image("snow-logo.png", width=220)
+with h_col2: st.markdown("<h1 style='text-align: center; color: white; padding-top: 10px;'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
+with h_col3: st.write("")
+st.markdown("---")
 
 # --- 5. SIDEBAR ---
 with st.sidebar:
+    st.markdown('<div class="sidebar-logo-container">', unsafe_allow_html=True)
+    st.image("VP Logo Horizontal Transparent White Lettering.png", width=220)
+    st.markdown('</div>', unsafe_allow_html=True)
     st.header("Report Filters")
-    if available_tags is not None:
-        selected_tags = st.multiselect("Select Product Tag", options=available_tags)
-    else:
-        st.error("updated_tags.csv missing")
-        st.stop()
+    selected_tags = st.multiselect("Select Product Tag", options=available_tags if available_tags else [])
     date_range = st.date_input("Date Range", value=(date.today().replace(day=1), date.today()))
     generate_btn = st.button("Generate Report")
 
@@ -190,7 +142,7 @@ else:
         for tag in selected_tags: sku_pool.extend(tag_map.get(tag, []))
         sku_pool = list(set(sku_pool))
         
-        verified_products = fetch_inventory_with_percentage(sku_pool, selected_tags)
+        verified_products = fetch_inventory_stable(sku_pool, selected_tags)
         loc_type_map = get_loc_map()
         report_list = []
         
@@ -223,5 +175,4 @@ else:
         else:
             st.error("❌ No matching inventory found.")
 
-# --- 7. FOOTER ---
-st.markdown(f'<div class="vp-footer">v6.5 | Vertical Passage Operations</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="vp-footer">v6.7 | Vertical Passage Operations</div>', unsafe_allow_html=True)
