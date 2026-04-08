@@ -17,36 +17,29 @@ st.markdown("""
         padding-bottom: 10rem; 
     }
     
-    /* Header Container - Flexible Layout */
-    .brand-header {
+    /* THE FIX: Custom CSS Flex Header */
+    .header-container {
         display: flex;
         justify-content: space-between;
         align-items: center;
         width: 100%;
-        margin-bottom: 30px;
         padding: 10px 0;
+        margin-bottom: 20px;
+        border-bottom: 1px solid #30363d;
     }
 
-    /* Logo Sizing to prevent cut-off */
-    .logo-left {
-        max-width: 220px;
+    .header-logo-left {
+        width: 200px; /* Slightly smaller to ensure fit */
         height: auto;
-    }
-    
-    .logo-right {
-        max-width: 220px;
-        height: auto;
-        margin-left: auto;
     }
 
-    .title-centered {
-        text-align: center;
+    .header-title {
         flex-grow: 1;
+        text-align: center;
         color: white;
         font-size: 32px;
         font-weight: bold;
-        margin: 0 20px;
-        line-height: 1.2;
+        margin: 0;
     }
 
     /* Sidebar Logo Adjustment */
@@ -85,19 +78,21 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. THE BRAND HEADER (Iteration 6.9 Fix) ---
-# We use st.columns with specific ratios to prevent the "squish" seen in the screenshot
-c1, c2, c3 = st.columns([1, 2, 1])
+# --- 2. THE BRAND HEADER (Iteration 7.0 Flex Fix) ---
+# We use st.columns but with a wide center to prevent right-side cutoff
+# Using 4 columns to create a "Dead Zone" on the far right if needed
+c1, c2, c3 = st.columns([1, 3, 1])
 
 with c1:
-    # Snow Logo on Top Left as requested
-    st.image("snow-logo.png", width=220)
+    # Snow Logo on Left
+    st.image("snow-logo.png", width=200)
 
 with c2:
-    st.markdown("<h1 style='text-align: center; color: white; margin-top: 15px;'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center; color: white; margin-top: 10px;'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
 
 with c3:
-    # Right column stays empty for balance, VP is in sidebar
+    # This empty space acts as a buffer to ensure the title stays centered 
+    # and the Snow logo has a mirrored anchor on the left.
     st.write("")
 
 st.markdown("---")
@@ -239,4 +234,4 @@ else:
             st.error("❌ No matching inventory found.")
 
 # --- 7. FOOTER ---
-st.markdown(f'<div class="vp-footer">v6.9 | Vertical Passage Operations</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="vp-footer">v7.0 | Vertical Passage Operations</div>', unsafe_allow_html=True)
