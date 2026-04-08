@@ -11,53 +11,42 @@ st.set_page_config(page_title="VP Storage Report", page_icon="VP Warehouse Icon 
 
 st.markdown("""
     <style>
-    /* Reset padding for the main block */
+    /* Global Reset */
     .block-container { 
-        padding-top: 2rem; 
+        padding-top: 5rem !important; 
         padding-bottom: 10rem; 
     }
-
-    /* THE LOGO FIX: Custom Header Bar for Snow Commerce */
-    .snow-header-container {
-        display: flex;
-        align-items: center;
-        margin-bottom: 20px;
-        padding-left: 10px; /* Moves logo away from the very edge */
+    
+    /* THE ABSOLUTE FIX: Position logos independently of Streamlit columns */
+    .snow-logo-float {
+        position: absolute;
+        top: -60px;
+        left: 0px;
+        z-index: 999;
     }
 
-    .snow-logo-img {
-        width: 220px !important;
-        height: auto;
-        object-fit: contain;
-    }
-
-    /* Centered Title Styling */
-    .report-title-main {
+    .report-title-container {
         text-align: center;
-        color: white;
-        font-size: 38px;
-        font-weight: bold;
-        margin-top: -10px;
         width: 100%;
+        margin-top: 20px;
+        margin-bottom: 30px;
     }
 
-    /* Sidebar Logo Fix - Ensuring it's not cut off at the top */
-    .sidebar-logo-centered {
-        display: flex;
-        justify-content: center;
-        padding: 20px 0px;
+    .report-title-text {
+        color: white;
+        font-size: 42px;
+        font-weight: bold;
+    }
+
+    /* Sidebar Logo Adjustment */
+    .sidebar-logo-container {
+        text-align: center;
+        padding-bottom: 20px;
         border-bottom: 1px solid #30363d;
-        margin-bottom: 10px;
+        margin-bottom: 20px;
     }
 
-    /* Button and Footer */
-    div.stButton > button { 
-        width: 100%; 
-        background-color: #161b22; 
-        color: white; 
-        border: 1px solid #30363d; 
-    }
-
+    /* Footer */
     .vp-footer {
         position: fixed;
         left: 0;
@@ -77,22 +66,20 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. THE BRANDING LAYOUT (Iteration 7.1 Fix) ---
+# --- 2. HEADER BRANDING (Iteration 7.2) ---
 
-# A. Main Page: Snow Logo (Top Left) and Title (Centered)
-# We use st.columns to prevent the logo from being pinned to the absolute 0,0 pixel coordinate
-logo_col, title_col = st.columns([1, 4])
+# A. Floating Snow Logo (Top Left of Main Content)
+# Using st.image inside a container to avoid the absolute CSS path issues
+with st.container():
+    c_logo, c_title = st.columns([1, 4])
+    with c_logo:
+        st.image("snow-logo.png", width=250) # Increased width for better visibility
+    with c_title:
+        st.markdown("<h1 style='text-align: center; color: white; margin-top: 10px; font-size: 45px;'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
 
-with logo_col:
-    # use_container_width=False ensures it stays exactly 220px and doesn't stretch/clip
-    st.image("snow-logo.png", width=220)
+st.markdown("<hr style='border: 1px solid #30363d; margin-top: 0px;'>", unsafe_allow_html=True)
 
-with title_col:
-    st.markdown("<h1 class='report-title-main'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
-
-st.markdown("<hr style='margin-top: 0px; border-color: #30363d;'>", unsafe_allow_html=True)
-
-# --- 3. DATA UTILITIES ---
+# --- 3. DATA & API CONFIG ---
 token = st.secrets.get("SHIPHERO_TOKEN_SNOW")
 SHIPHERO_API_URL = "https://public-api.shiphero.com/graphql"
 HEADERS = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -134,7 +121,7 @@ def get_loc_map():
         return dict(zip(df['Location'].str.strip(), df['Type'].str.strip()))
     except: return {}
 
-# --- 4. DATA ENGINE ---
+# --- 4. DATA ENGINE (Stable Batching) ---
 def fetch_inventory_stable(sku_list, selected_tags):
     final_results = []
     normalized_selections = [str(t).lower().strip() for t in selected_tags]
@@ -174,20 +161,18 @@ def fetch_inventory_stable(sku_list, selected_tags):
     progress_bar.empty()
     return final_results
 
-# --- 5. UI SIDEBAR ---
-available_tags, tag_map = load_csv_data()
+# --- 5. SIDEBAR (VP Logo + Controls) ---
 with st.sidebar:
-    # Centered Vertical Passage Logo
-    st.markdown('<div class="sidebar-logo-centered">', unsafe_allow_html=True)
+    st.markdown('<div class="sidebar-logo-container">', unsafe_allow_html=True)
     st.image("VP Logo Horizontal Transparent White Lettering.png", width=220)
     st.markdown('</div>', unsafe_allow_html=True)
-    
     st.header("Report Filters")
+    available_tags, tag_map = load_csv_data()
     selected_tags = st.multiselect("Select Product Tag", options=available_tags if available_tags else [])
     date_range = st.date_input("Date Range", value=(date.today().replace(day=1), date.today()))
     generate_btn = st.button("Generate Report")
 
-# --- 6. PROCESSING ---
+# --- 6. MAIN LOGIC ---
 if not selected_tags:
     st.info("👈 Select a tag in the sidebar to begin.")
 else:
@@ -231,4 +216,4 @@ else:
             st.error("❌ No matching inventory found.")
 
 # --- 7. FOOTER ---
-st.markdown(f'<div class="vp-footer">v7.1 | Vertical Passage Operations</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="vp-footer">v7.2 | Vertical Passage Operations</div>', unsafe_allow_html=True)
