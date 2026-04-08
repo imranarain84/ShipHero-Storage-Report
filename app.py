@@ -62,8 +62,8 @@ def get_loc_map():
         return dict(zip(df['Location'].str.strip(), df['Type'].str.strip()))
     except: return {}
 
-# --- 4. OPTIMIZED ENGINE (EXCLUDING EMPTY LOCATIONS) ---
-def run_report_filtered(sku_list, num_days, loc_type_map):
+# --- 4. DATA ENGINE (The "Safe-Capture" Logic) ---
+def run_report_safe(sku_list, num_days, loc_type_map):
     report_data = []
     total = len(sku_list)
     status_text = st.empty()
@@ -74,11 +74,12 @@ def run_report_filtered(sku_list, num_days, loc_type_map):
     for i in range(0, total, batch_size):
         batch = sku_list[i : i + batch_size]
         elapsed = time.time() - start_time
-        time_left = f"{int((elapsed/max(i,1))*(total-i)//60)}m {int((elapsed/max(i,1))*(total-i)%60)}s remaining" if i > 0 else "Calculating..."
+        time_left = f"{int((elapsed/max(i,1))*(total-i)//60)}m {int((elapsed/max(i,1))*(total-i)%60)}s remaining" if i > 0 else "Estimating..."
         status_text.markdown(f"### 📥 Loading Data: **{int((i/total)*100)}%** complete\n*{time_left}*")
         progress_bar.progress(i / total)
         
-        fragments = " ".join([f's{idx}: product(sku: "{s.strip()}") {{ data {{ sku name warehouse_products {{ locations(first: 50) {{ edges {{ node {{ quantity location {{ name }} }} }} }} }} }} }}' for idx, s in enumerate(batch)])
+        # Pulling both locations and on-hand to ensure we catch the product even if binless
+        fragments = " ".join([f's{idx}: product(sku: "{s.strip()}") {{ data {{ sku name warehouse_products {{ on_hand locations(first: 50) {{ edges {{ node {{ quantity location {{ name }} }} }} }} }} }} }}' for idx, s in enumerate(batch)])
         
         try:
             r = requests.post(SHIPHERO_API_URL, json={'query': f"query {{ {fragments} }}"}, headers=HEADERS, timeout=60)
@@ -87,9 +88,10 @@ def run_report_filtered(sku_list, num_days, loc_type_map):
                 for key in data:
                     node = data[key].get('data') if data[key] else None
                     if node:
-                        # Only add to report if locations exist
+                        found_loc_entry = False
                         for wh in node.get('warehouse_products', []):
                             for edge in wh.get('locations', {}).get('edges', []):
+                                found_loc_entry = True
                                 loc_node = edge['node']
                                 l_name = loc_node['location']['name']
                                 l_type = loc_type_map.get(l_name, "Unknown")
@@ -97,6 +99,13 @@ def run_report_filtered(sku_list, num_days, loc_type_map):
                                     "Product": node['name'], "SKU": node['sku'], "Location": l_name,
                                     "Type": l_type, "Qty": loc_node['quantity'], "Period Cost": round(STORAGE_TYPES.get(l_type, 0.0) * num_days, 2)
                                 })
+                        
+                        # If the SKU exists but has no bins, add a single placeholder row
+                        if not found_loc_entry:
+                            report_data.append({
+                                "Product": node['name'], "SKU": node['sku'], "Location": "No Active Bin",
+                                "Type": "N/A", "Qty": 0, "Period Cost": 0.0
+                            })
             time.sleep(0.2)
         except: continue
             
@@ -119,14 +128,14 @@ if generate_btn and selected_tags:
     sku_pool = list(set([sku for t in selected_tags for sku in tag_map.get(t, [])]))
     loc_type_map = get_loc_map()
     
-    df = run_report_filtered(sku_pool, num_days, loc_type_map)
+    df = run_report_safe(sku_pool, num_days, loc_type_map)
 
     if not df.empty:
-        st.success(f"Report Generated: {len(df['SKU'].unique())} SKUs found with active inventory.")
+        st.success(f"Report Generated: {len(df['SKU'].unique())} SKUs processed.")
         st.metric("Total Period Cost", f"${df['Period Cost'].sum():,.2f}")
         st.dataframe(df, use_container_width=True, hide_index=True)
         st.download_button("Download CSV", df.to_csv(index=False), "report.csv")
     else:
-        st.error("❌ No active inventory found for the selected tags.")
+        st.error("❌ No data returned. Please check if the SKUs in the CSV exist in ShipHero.")
 
-st.markdown(f'<div class="vp-footer">v8.5 | Vertical Passage Operations</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="vp-footer">v8.6 | Vertical Passage Operations</div>', unsafe_allow_html=True)
