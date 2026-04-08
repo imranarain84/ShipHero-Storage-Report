@@ -3,7 +3,7 @@ import pandas as pd
 import requests
 import time
 import os
-from datetime import date, datetime
+from datetime import date
 
 # --- 1. CONFIGURATION & BRANDING ---
 st.set_page_config(page_title="VP Storage Report", page_icon="VP Warehouse Icon TP.png", layout="wide")
@@ -23,8 +23,8 @@ st.markdown("""
 
 # --- 2. HEADER ---
 st.markdown("<div class='header-box'><h1 class='main-title-text'>Warehouse Storage Cost Report</h1></div>", unsafe_allow_html=True)
-col_l, col_m, col_r = st.columns([1.5, 1, 1.5])
-with col_m:
+_, logo_col, _ = st.columns([1.5, 1, 1.5])
+with logo_col:
     st.image("snow-logo.png", width=250, use_container_width=True)
 st.markdown("<hr style='border: 1px solid #30363d; margin-top: 10px; margin-bottom: 30px;'>", unsafe_allow_html=True)
 
@@ -33,7 +33,6 @@ token = st.secrets.get("SHIPHERO_TOKEN_SNOW")
 SHIPHERO_API_URL = "https://public-api.shiphero.com/graphql"
 HEADERS = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 CSV_FILE = "updated_tags.csv" 
-W_PRIMARY, W_NORTH = "V2FyZWhvdXNlOjczNjY2", "V2FyZWhvdXNlOjExNjI4OA=="
 
 STORAGE_TYPES = {
     "Standard Bin": 0.0442, "Bin": 0.0442, "Blue Bin Small": 0.0488, 
@@ -65,59 +64,33 @@ def get_loc_map():
         return dict(zip(df['Location'].str.strip(), df['Type'].str.strip()))
     except: return {}
 
-# --- 4. ADVANCED PROGRESS ENGINE ---
-def fetch_inventory_high_speed(sku_list):
+# --- 4. DATA ENGINE (High Speed + Catch All) ---
+def fetch_inventory_inclusive(sku_list):
     final_results = []
     total = len(sku_list)
-    
     status_text = st.empty()
     progress_bar = st.progress(0)
-    
     start_time = time.time()
-    batch_size = 15 # Faster batching
     
+    batch_size = 15
     for i in range(0, total, batch_size):
         batch = sku_list[i : i + batch_size]
-        
-        # Calculate Time Remaining
         elapsed = time.time() - start_time
-        if i > 0:
-            avg_time_per_sku = elapsed / i
-            remaining_skus = total - i
-            seconds_left = int(avg_time_per_sku * remaining_skus)
-            mins, secs = divmod(seconds_left, 60)
-            time_str = f"{mins}m {secs}s remaining"
-        else:
-            time_str = "Calculating..."
-
-        percent = int((i / total) * 100)
-        status_text.markdown(f"### 📥 Loading Data: **{percent}%** complete  \n*{time_str}*")
+        time_str = f"{int((elapsed/i)*(total-i)//60)}m {int((elapsed/i)*(total-i)%60)}s remaining" if i > 0 else "Estimating..."
+        status_text.markdown(f"### 📥 Loading Data: **{int((i/total)*100)}%** complete\n*{time_str}*")
         progress_bar.progress(i / total)
         
         fragments = " ".join([f's{idx}: product(sku: "{s.strip()}") {{ data {{ sku name warehouse_products {{ warehouse_id locations(first: 50) {{ edges {{ node {{ quantity location {{ name }} }} }} }} }} }} }}' for idx, s in enumerate(batch)])
         
         try:
             r = requests.post(SHIPHERO_API_URL, json={'query': f"query {{ {fragments} }}"}, headers=HEADERS, timeout=60)
-            res_json = r.json()
-            
-            # Smart Credit Handling
-            if 'errors' in res_json:
-                msg = str(res_json['errors']).lower()
-                if "credits" in msg or "complexity" in msg:
-                    status_text.markdown(f"⚠️ **API Throttled: Waiting for credits to refill...**")
-                    time.sleep(15) # Wait for refill
-                    r = requests.post(SHIPHERO_API_URL, json={'query': f"query {{ {fragments} }}"}, headers=HEADERS, timeout=60)
-                    res_json = r.json()
-
-            data = res_json.get('data', {})
-            for key in data:
-                if data[key] and data[key].get('data'):
-                    final_results.append(data[key]['data'])
-            
-            # Keeping the connection active
+            data = r.json().get('data', {})
+            if data:
+                for key in data:
+                    if data[key] and data[key].get('data'):
+                        final_results.append(data[key]['data'])
             time.sleep(0.2)
-        except Exception as e:
-            continue
+        except: continue
             
     status_text.empty()
     progress_bar.empty()
@@ -125,9 +98,7 @@ def fetch_inventory_high_speed(sku_list):
 
 # --- 5. SIDEBAR ---
 with st.sidebar:
-    st.markdown('<div class="sidebar-branding">', unsafe_allow_html=True)
-    st.image("VP Logo Horizontal Transparent White Lettering.png", width=220)
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sidebar-branding"><img src="https://raw.githubusercontent.com/YOUR_REPO/main/VP%20Logo%20Horizontal%20Transparent%20White%20Lettering.png" width="220"></div>', unsafe_allow_html=True)
     available_tags, tag_map = load_csv_data()
     selected_tags = st.multiselect("Select Tag", options=available_tags if available_tags else [])
     date_range = st.date_input("Date Range", value=(date.today().replace(day=1), date.today()), format="MM/DD/YYYY")
@@ -138,23 +109,25 @@ if generate_btn and selected_tags:
     num_days = (date_range[1] - date_range[0]).days + 1 if isinstance(date_range, tuple) and len(date_range) == 2 else 1
     sku_pool = list(set([sku for t in selected_tags for sku in tag_map.get(t, [])]))
     
-    products = fetch_inventory_high_speed(sku_pool)
+    products = fetch_inventory_inclusive(sku_pool)
     loc_type_map = get_loc_map()
     report = []
     
     for p in products:
-        found_wh = False
+        found_any_loc = False
         for wh in p.get('warehouse_products', []):
-            if wh['warehouse_id'] in [W_PRIMARY, W_NORTH]:
-                for edge in wh.get('locations', {}).get('edges', []):
-                    found_wh = True
-                    n = edge['node']
-                    l_type = loc_type_map.get(n['location']['name'], "Unknown")
-                    report.append({
-                        "Product": p['name'], "SKU": p['sku'], "Location": n['location']['name'],
-                        "Type": l_type, "Qty": n['quantity'], "Period Cost": round(STORAGE_TYPES.get(l_type, 0.0) * num_days, 2)
-                    })
-        if not found_wh:
+            # CATCH ALL: We removed the hardcoded Warehouse ID check here
+            for edge in wh.get('locations', {}).get('edges', []):
+                found_any_loc = True
+                n = edge['node']
+                l_name = n['location']['name']
+                l_type = loc_type_map.get(l_name, "Unknown")
+                report.append({
+                    "Product": p['name'], "SKU": p['sku'], "Location": l_name,
+                    "Type": l_type, "Qty": n['quantity'], "Period Cost": round(STORAGE_TYPES.get(l_type, 0.0) * num_days, 2)
+                })
+        
+        if not found_any_loc:
             report.append({"Product": p['name'], "SKU": p['sku'], "Location": "No Bin Found", "Type": "N/A", "Qty": 0, "Period Cost": 0.0})
 
     if report:
@@ -164,6 +137,6 @@ if generate_btn and selected_tags:
         st.dataframe(df, use_container_width=True, hide_index=True)
         st.download_button("Download CSV", df.to_csv(index=False), "report.csv")
     else:
-        st.error("❌ No matching inventory found in ShipHero.")
+        st.error("❌ No matching inventory found. Check if SKUs exist in ShipHero.")
 
-st.markdown(f'<div class="vp-footer">v8.1 | Vertical Passage Operations</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="vp-footer">v8.2 | Vertical Passage Operations</div>', unsafe_allow_html=True)
