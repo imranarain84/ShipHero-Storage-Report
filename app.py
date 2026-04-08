@@ -11,14 +11,72 @@ st.set_page_config(page_title="VP Storage Report", page_icon="VP Warehouse Icon 
 
 st.markdown("""
     <style>
-    .block-container { padding-top: 1rem; padding-bottom: 10rem; }
-    [data-testid="stHeader"] { background-color: #0e1117; height: 0px; }
-    .report-title-container { flex-grow: 2; text-align: center; }
-    div.stButton > button { display: block; margin: 0 auto; width: 100%; background-color: #161b22; color: white; border: 1px solid #30363d; }
-    .vp-footer { position: fixed; left: 0; bottom: 0; width: 100%; background-color: #0e1117; color: #555e67; text-align: center; padding: 15px 0px; font-size: 13px; border-top: 1px solid #30363d; z-index: 999999; }
+    .block-container { 
+        padding-top: 1rem; 
+        padding-bottom: 10rem; 
+    }
+    [data-testid="stHeader"] { 
+        background-color: #0e1117; 
+        height: 0px; 
+    }
+    
+    /* THE FIX: Ensuring logos aren't clipped */
+    .logo-header-container {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        width: 100%;
+        padding: 10px 20px;
+    }
+
+    .logo-img {
+        max-height: 80px; /* Limits height to prevent clipping */
+        width: auto;
+        object-fit: contain;
+    }
+
+    .report-title-centered {
+        flex-grow: 1;
+        text-align: center;
+        color: white;
+        font-size: 32px;
+        font-weight: bold;
+        margin: 0;
+    }
+
+    div.stButton > button { 
+        display: block; 
+        margin: 0 auto; 
+        width: 100%; 
+        background-color: #161b22; 
+        color: white; 
+        border: 1px solid #30363d; 
+    }
+
+    .vp-footer {
+        position: fixed;
+        left: 0;
+        bottom: 0;
+        width: 100%;
+        background-color: #0e1117;
+        color: #555e67;
+        text-align: center;
+        padding: 15px 0px;
+        font-size: 13px;
+        border-top: 1px solid #30363d;
+        z-index: 999999;
+    }
+    
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    .sidebar-logo-container { display: flex; justify-content: center; padding-bottom: 10px; }
+    
+    .sidebar-logo-container { 
+        display: flex; 
+        justify-content: center; 
+        padding-bottom: 20px; 
+        border-bottom: 1px solid #30363d;
+        margin-bottom: 20px;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -68,12 +126,10 @@ def get_loc_map():
 def fetch_inventory_stable(sku_list, selected_tags):
     final_results = []
     normalized_selections = [str(t).lower().strip() for t in selected_tags]
-    
     progress_text = st.empty()
     progress_bar = st.progress(0)
     total_skus = len(sku_list)
     
-    # Process 5 at a time to balance speed and ShipHero stability
     batch_size = 5
     for i in range(0, total_skus, batch_size):
         batch = sku_list[i : i + batch_size]
@@ -81,45 +137,45 @@ def fetch_inventory_stable(sku_list, selected_tags):
         progress_text.markdown(f"**Loading... {current_percent}%**")
         progress_bar.progress(i / total_skus)
         
-        # Build individual fragments for the batch
         fragments = ""
         for idx, sku in enumerate(batch):
             fragments += f'sku_{idx}: product(sku: "{sku.strip()}") {{ data {{ sku name tags warehouse_products {{ warehouse_id locations(first: 50) {{ edges {{ node {{ quantity location {{ name }} }} }} }} }} }} }} '
 
         query = f"query {{ {fragments} }}"
-        
         try:
             r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS, timeout=60)
             res = r.json()
-            
-            # Handle credit limits
             if 'errors' in res and "credits" in res['errors'][0].get('message', '').lower():
                 time.sleep(15)
                 r = requests.post(SHIPHERO_API_URL, json={'query': query}, headers=HEADERS)
                 res = r.json()
-            
             data = res.get('data', {})
             for key in data:
-                product_data = data[key].get('data')
-                if product_data:
+                if data[key] and data[key].get('data'):
+                    product_data = data[key]['data']
                     ship_tags = [str(t).lower().strip() for t in product_data.get('tags', [])]
                     if any(sel in ship_tags for sel in normalized_selections):
                         final_results.append(product_data)
-            
             time.sleep(0.4)
-        except Exception as e:
-            continue
-            
+        except: continue
     progress_text.empty()
     progress_bar.empty()
     return final_results
 
-# --- 4. HEADER LAYOUT ---
+# --- 4. HEADER LAYOUT (Revised for visibility) ---
 available_tags, tag_map = load_csv_data()
 h_col1, h_col2, h_col3 = st.columns([1, 2, 1])
-with h_col1: st.image("snow-logo.png", width=220)
-with h_col2: st.markdown("<h1 style='text-align: center; color: white; padding-top: 10px;'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
-with h_col3: st.write("")
+
+with h_col1:
+    # Adding padding and contain to prevent cutoff
+    st.image("snow-logo.png", width=220, use_container_width=False)
+
+with h_col2:
+    st.markdown("<h1 style='text-align: center; color: white; padding-top: 15px; margin:0;'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
+
+with h_col3:
+    st.write("") # Spacer
+
 st.markdown("---")
 
 # --- 5. SIDEBAR ---
@@ -175,4 +231,4 @@ else:
         else:
             st.error("❌ No matching inventory found.")
 
-st.markdown(f'<div class="vp-footer">v6.7 | Vertical Passage Operations</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="vp-footer">v6.8 | Vertical Passage Operations</div>', unsafe_allow_html=True)
