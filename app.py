@@ -2,9 +2,8 @@ import streamlit as st
 import pandas as pd
 import requests
 import time
-import json
 import os
-from datetime import date
+from datetime import date, datetime
 
 # --- 1. CONFIGURATION & BRANDING ---
 st.set_page_config(page_title="VP Storage Report", page_icon="VP Warehouse Icon TP.png", layout="wide")
@@ -66,35 +65,61 @@ def get_loc_map():
         return dict(zip(df['Location'].str.strip(), df['Type'].str.strip()))
     except: return {}
 
-# --- 4. IMPROVED ROBUST ENGINE ---
-def fetch_inventory_robust(sku_list):
+# --- 4. ADVANCED PROGRESS ENGINE ---
+def fetch_inventory_high_speed(sku_list):
     final_results = []
-    progress_bar = st.progress(0)
     total = len(sku_list)
     
-    batch_size = 8 # Reduced slightly for better stability
+    status_text = st.empty()
+    progress_bar = st.progress(0)
+    
+    start_time = time.time()
+    batch_size = 15 # Faster batching
+    
     for i in range(0, total, batch_size):
         batch = sku_list[i : i + batch_size]
-        progress_bar.progress(min(i / total, 1.0))
+        
+        # Calculate Time Remaining
+        elapsed = time.time() - start_time
+        if i > 0:
+            avg_time_per_sku = elapsed / i
+            remaining_skus = total - i
+            seconds_left = int(avg_time_per_sku * remaining_skus)
+            mins, secs = divmod(seconds_left, 60)
+            time_str = f"{mins}m {secs}s remaining"
+        else:
+            time_str = "Calculating..."
+
+        percent = int((i / total) * 100)
+        status_text.markdown(f"### 📥 Loading Data: **{percent}%** complete  \n*{time_str}*")
+        progress_bar.progress(i / total)
         
         fragments = " ".join([f's{idx}: product(sku: "{s.strip()}") {{ data {{ sku name warehouse_products {{ warehouse_id locations(first: 50) {{ edges {{ node {{ quantity location {{ name }} }} }} }} }} }} }}' for idx, s in enumerate(batch)])
         
         try:
             r = requests.post(SHIPHERO_API_URL, json={'query': f"query {{ {fragments} }}"}, headers=HEADERS, timeout=60)
-            data = r.json().get('data', {})
+            res_json = r.json()
             
-            if not data: # If API returns empty, wait and retry once
-                time.sleep(5)
-                r = requests.post(SHIPHERO_API_URL, json={'query': f"query {{ {fragments} }}"}, headers=HEADERS, timeout=60)
-                data = r.json().get('data', {})
+            # Smart Credit Handling
+            if 'errors' in res_json:
+                msg = str(res_json['errors']).lower()
+                if "credits" in msg or "complexity" in msg:
+                    status_text.markdown(f"⚠️ **API Throttled: Waiting for credits to refill...**")
+                    time.sleep(15) # Wait for refill
+                    r = requests.post(SHIPHERO_API_URL, json={'query': f"query {{ {fragments} }}"}, headers=HEADERS, timeout=60)
+                    res_json = r.json()
 
+            data = res_json.get('data', {})
             for key in data:
                 if data[key] and data[key].get('data'):
                     final_results.append(data[key]['data'])
             
-            time.sleep(0.4) # Respectful throttle
-        except: continue
+            # Keeping the connection active
+            time.sleep(0.2)
+        except Exception as e:
+            continue
             
+    status_text.empty()
     progress_bar.empty()
     return final_results
 
@@ -113,8 +138,7 @@ if generate_btn and selected_tags:
     num_days = (date_range[1] - date_range[0]).days + 1 if isinstance(date_range, tuple) and len(date_range) == 2 else 1
     sku_pool = list(set([sku for t in selected_tags for sku in tag_map.get(t, [])]))
     
-    st.write(f"🔄 Processing {len(sku_pool)} SKUs from CSV...")
-    products = fetch_inventory_robust(sku_pool)
+    products = fetch_inventory_high_speed(sku_pool)
     loc_type_map = get_loc_map()
     report = []
     
@@ -142,4 +166,4 @@ if generate_btn and selected_tags:
     else:
         st.error("❌ No matching inventory found in ShipHero.")
 
-st.markdown(f'<div class="vp-footer">v8.0 | Vertical Passage Operations</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="vp-footer">v8.1 | Vertical Passage Operations</div>', unsafe_allow_html=True)
