@@ -11,44 +11,43 @@ st.set_page_config(page_title="VP Storage Report", page_icon="VP Warehouse Icon 
 
 st.markdown("""
     <style>
-    /* Reset and Base Spacing */
+    /* Reset padding for the main block */
     .block-container { 
         padding-top: 2rem; 
         padding-bottom: 10rem; 
     }
-    
-    /* THE FIX: Custom CSS Flex Header */
-    .header-container {
+
+    /* THE LOGO FIX: Custom Header Bar for Snow Commerce */
+    .snow-header-container {
         display: flex;
-        justify-content: space-between;
         align-items: center;
-        width: 100%;
-        padding: 10px 0;
         margin-bottom: 20px;
-        border-bottom: 1px solid #30363d;
+        padding-left: 10px; /* Moves logo away from the very edge */
     }
 
-    .header-logo-left {
-        width: 200px; /* Slightly smaller to ensure fit */
+    .snow-logo-img {
+        width: 220px !important;
         height: auto;
+        object-fit: contain;
     }
 
-    .header-title {
-        flex-grow: 1;
+    /* Centered Title Styling */
+    .report-title-main {
         text-align: center;
         color: white;
-        font-size: 32px;
+        font-size: 38px;
         font-weight: bold;
-        margin: 0;
+        margin-top: -10px;
+        width: 100%;
     }
 
-    /* Sidebar Logo Adjustment */
-    .sidebar-logo-container { 
-        display: flex; 
-        justify-content: center; 
-        padding-bottom: 20px; 
+    /* Sidebar Logo Fix - Ensuring it's not cut off at the top */
+    .sidebar-logo-centered {
+        display: flex;
+        justify-content: center;
+        padding: 20px 0px;
         border-bottom: 1px solid #30363d;
-        margin-bottom: 20px;
+        margin-bottom: 10px;
     }
 
     /* Button and Footer */
@@ -78,26 +77,22 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. THE BRAND HEADER (Iteration 7.0 Flex Fix) ---
-# We use st.columns but with a wide center to prevent right-side cutoff
-# Using 4 columns to create a "Dead Zone" on the far right if needed
-c1, c2, c3 = st.columns([1, 3, 1])
+# --- 2. THE BRANDING LAYOUT (Iteration 7.1 Fix) ---
 
-with c1:
-    # Snow Logo on Left
-    st.image("snow-logo.png", width=200)
+# A. Main Page: Snow Logo (Top Left) and Title (Centered)
+# We use st.columns to prevent the logo from being pinned to the absolute 0,0 pixel coordinate
+logo_col, title_col = st.columns([1, 4])
 
-with c2:
-    st.markdown("<h1 style='text-align: center; color: white; margin-top: 10px;'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
+with logo_col:
+    # use_container_width=False ensures it stays exactly 220px and doesn't stretch/clip
+    st.image("snow-logo.png", width=220)
 
-with c3:
-    # This empty space acts as a buffer to ensure the title stays centered 
-    # and the Snow logo has a mirrored anchor on the left.
-    st.write("")
+with title_col:
+    st.markdown("<h1 class='report-title-main'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
 
-st.markdown("---")
+st.markdown("<hr style='margin-top: 0px; border-color: #30363d;'>", unsafe_allow_html=True)
 
-# --- 3. API & DATA CONFIGURATION ---
+# --- 3. DATA UTILITIES ---
 token = st.secrets.get("SHIPHERO_TOKEN_SNOW")
 SHIPHERO_API_URL = "https://public-api.shiphero.com/graphql"
 HEADERS = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -182,9 +177,11 @@ def fetch_inventory_stable(sku_list, selected_tags):
 # --- 5. UI SIDEBAR ---
 available_tags, tag_map = load_csv_data()
 with st.sidebar:
-    st.markdown('<div class="sidebar-logo-container">', unsafe_allow_html=True)
+    # Centered Vertical Passage Logo
+    st.markdown('<div class="sidebar-logo-centered">', unsafe_allow_html=True)
     st.image("VP Logo Horizontal Transparent White Lettering.png", width=220)
     st.markdown('</div>', unsafe_allow_html=True)
+    
     st.header("Report Filters")
     selected_tags = st.multiselect("Select Product Tag", options=available_tags if available_tags else [])
     date_range = st.date_input("Date Range", value=(date.today().replace(day=1), date.today()))
@@ -234,4 +231,4 @@ else:
             st.error("❌ No matching inventory found.")
 
 # --- 7. FOOTER ---
-st.markdown(f'<div class="vp-footer">v7.0 | Vertical Passage Operations</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="vp-footer">v7.1 | Vertical Passage Operations</div>', unsafe_allow_html=True)
