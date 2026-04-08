@@ -11,42 +11,38 @@ st.set_page_config(page_title="VP Storage Report", page_icon="VP Warehouse Icon 
 
 st.markdown("""
     <style>
-    /* Global Reset */
+    /* Global Reset to prevent clipping */
     .block-container { 
-        padding-top: 5rem !important; 
+        padding-top: 2rem !important; 
         padding-bottom: 10rem; 
     }
     
-    /* THE ABSOLUTE FIX: Position logos independently of Streamlit columns */
-    .snow-logo-float {
-        position: absolute;
-        top: -60px;
-        left: 0px;
-        z-index: 999;
-    }
-
-    .report-title-container {
+    /* Header Styling */
+    .main-title {
         text-align: center;
-        width: 100%;
-        margin-top: 20px;
-        margin-bottom: 30px;
-    }
-
-    .report-title-text {
         color: white;
         font-size: 42px;
         font-weight: bold;
+        margin-top: 10px;
+        margin-bottom: 5px;
     }
 
-    /* Sidebar Logo Adjustment */
+    /* Sidebar Logo & Spacing */
     .sidebar-logo-container {
         text-align: center;
-        padding-bottom: 20px;
+        padding: 10px 0px 20px 0px;
         border-bottom: 1px solid #30363d;
         margin-bottom: 20px;
     }
 
-    /* Footer */
+    /* Button and Footer */
+    div.stButton > button { 
+        width: 100%; 
+        background-color: #161b22; 
+        color: white; 
+        border: 1px solid #30363d; 
+    }
+
     .vp-footer {
         position: fixed;
         left: 0;
@@ -66,18 +62,12 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. HEADER BRANDING (Iteration 7.2) ---
+# --- 2. HEADER BRANDING (Iteration 7.3 Fix) ---
 
-# A. Floating Snow Logo (Top Left of Main Content)
-# Using st.image inside a container to avoid the absolute CSS path issues
-with st.container():
-    c_logo, c_title = st.columns([1, 4])
-    with c_logo:
-        st.image("snow-logo.png", width=250) # Increased width for better visibility
-    with c_title:
-        st.markdown("<h1 style='text-align: center; color: white; margin-top: 10px; font-size: 45px;'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
-
-st.markdown("<hr style='border: 1px solid #30363d; margin-top: 0px;'>", unsafe_allow_html=True)
+# We place the Snow Logo and Title in a vertical stack to guarantee no overlap
+st.image("snow-logo.png", width=250)
+st.markdown("<h1 class='main-title'>Warehouse Storage Cost Report</h1>", unsafe_allow_html=True)
+st.markdown("<hr style='border: 1px solid #30363d; margin-top: 0px; margin-bottom: 30px;'>", unsafe_allow_html=True)
 
 # --- 3. DATA & API CONFIG ---
 token = st.secrets.get("SHIPHERO_TOKEN_SNOW")
@@ -166,10 +156,18 @@ with st.sidebar:
     st.markdown('<div class="sidebar-logo-container">', unsafe_allow_html=True)
     st.image("VP Logo Horizontal Transparent White Lettering.png", width=220)
     st.markdown('</div>', unsafe_allow_html=True)
+    
     st.header("Report Filters")
     available_tags, tag_map = load_csv_data()
     selected_tags = st.multiselect("Select Product Tag", options=available_tags if available_tags else [])
-    date_range = st.date_input("Date Range", value=(date.today().replace(day=1), date.today()))
+    
+    # REFORMATTED DATE RANGE (MM/DD/YYYY)
+    date_range = st.date_input(
+        "Select Date Range", 
+        value=(date.today().replace(day=1), date.today()),
+        format="MM/DD/YYYY"
+    )
+    
     generate_btn = st.button("Generate Report")
 
 # --- 6. MAIN LOGIC ---
@@ -216,4 +214,4 @@ else:
             st.error("❌ No matching inventory found.")
 
 # --- 7. FOOTER ---
-st.markdown(f'<div class="vp-footer">v7.2 | Vertical Passage Operations</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="vp-footer">v7.3 | Vertical Passage Operations</div>', unsafe_allow_html=True)
